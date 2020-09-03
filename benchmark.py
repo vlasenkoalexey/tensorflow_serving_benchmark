@@ -95,7 +95,7 @@ class Worker(object):
       self._queue.task_done()
       processed_count = self._num_requests - self._queue.qsize()
       if processed_count % (10 * self._qps) == 0:
-        tf.logging.info('received {} responses'.format(processed_count))
+        tf.logging.debug('received {} responses'.format(processed_count))
 
     def _send_rpc():
       self._start_time = time.time()
@@ -151,8 +151,8 @@ def run_grpc_load_test(address, requests, qps):
 
   workers = []
   miss_rate_percent = []
-  start = time.time()
-  previous_worker_start = start
+  start_time = time.time()
+  previous_worker_start = start_time
   for i in range(num_requests):
     request = requests[i]
     interval = intervals[i]
@@ -160,7 +160,7 @@ def run_grpc_load_test(address, requests, qps):
     workers.append(worker)
     worker.start()
     if i % (qps * 10) == 0:
-      tf.logging.info('sent {} requests.'.format(i))
+      tf.logging.debug('sent {} requests.'.format(i))
     # send requests at a constant rate and adjust for the time it took to send previous request
     pause = interval - (time.time() - previous_worker_start)
     if pause > 0:
@@ -172,11 +172,11 @@ def run_grpc_load_test(address, requests, qps):
 
   # block until all workers are done
   q.join()
-  acc_time = time.time() - start
+  acc_time = time.time() - start_time
   success_count = 0
   error_count = 0
   latency = []
-  worker_end_time = start
+  worker_end_time = start_time
   for w in workers:
     success_count += w.success_count
     error_count += w.error_count
@@ -187,12 +187,6 @@ def run_grpc_load_test(address, requests, qps):
   if len(miss_rate_percent) > 0:
     avg_miss_rate_percent = np.average(miss_rate_percent)
     tf.logging.warn('couldn\'t keep up at current QPS rate, average miss rate:{:.2f}%'.format(avg_miss_rate_percent))
-
-  tf.logging.info('num_qps:{:.2f} requests/second: {:.2f} #success:{} #error:{} '
-                  'latencies: [avg:{:.2f}ms p50:{:.2f}ms p90:{:.2f}ms p99:{:.2f}ms]'.format(
-                      qps, num_requests / acc_time, success_count, error_count,
-                      np.average(latency) * 1000, np.percentile(latency, 50) * 1000,
-                      np.percentile(latency, 90) * 1000, np.percentile(latency, 99) * 1000))
 
   return {
     'reqested_qps': qps,
@@ -205,7 +199,9 @@ def run_grpc_load_test(address, requests, qps):
     'p90': np.percentile(latency, 90) * 1000,
     'p99': np.percentile(latency, 99) * 1000,
     'avg_miss_rate_percent': avg_miss_rate_percent,
-    '_latency': latency
+    '_latency': latency,
+    '_start_time': start_time,
+    '_end_time': time.time()
   }
 
 
@@ -249,7 +245,7 @@ def run_synchronous_grpc_load_test(address, requests, qps):
 
     latency.append(time.time() - start_time)
     if len(latency) % (qps * 10) == 0:
-      tf.logging.info('received {} responses.'.format(len(latency)))
+      tf.logging.debug('received {} responses.'.format(len(latency)))
 
   intervals = []
   for i in range(num_requests):
@@ -265,7 +261,7 @@ def run_synchronous_grpc_load_test(address, requests, qps):
     thread_lst.append(thread)
     thread.start()
     if i % (qps * 10) == 0:
-      tf.logging.info('sent {} requests.'.format(i))
+      tf.logging.debug('sent {} requests.'.format(i))
 
     # send requests at a constant rate and adjust for the time it took to send previous request
     pause = interval - (time.time() - previous_worker_start)
@@ -286,11 +282,6 @@ def run_synchronous_grpc_load_test(address, requests, qps):
     avg_miss_rate_percent = np.average(miss_rate_percent)
     tf.logging.warn('couldn\'t keep up at current QPS rate, average miss rate:{:.2f}%'.format(avg_miss_rate_percent))
 
-  tf.logging.info('num_qps:{} requests/second: {:.2f} #success:{} #error:{} '
-                  'latencies: [avg:{:.2f}ms p50:{:.2f}ms p90:{:.2f}ms p99:{:.2f}ms]'.format(
-                      qps, num_requests / acc_time, sum(success), sum(error),
-                      np.average(latency) * 1000, np.percentile(latency, 50) * 1000,
-                      np.percentile(latency, 90) * 1000, np.percentile(latency, 99) * 1000))
   return {
     'reqested_qps': qps,
     'actual_qps': num_requests / acc_time,
@@ -302,7 +293,9 @@ def run_synchronous_grpc_load_test(address, requests, qps):
     'p90': np.percentile(latency, 90) * 1000,
     'p99': np.percentile(latency, 99) * 1000,
     'avg_miss_rate_percent': avg_miss_rate_percent,
-    '_latency': latency
+    '_latency': latency,
+    '_start_time': start_time,
+    '_end_time': time.time()
   }
 
 
@@ -326,7 +319,7 @@ def run_rest_load_test(address, requests, qps):
     resp = r.post(address, data=requests[i])
     latency.append(time.time() - start_time)
     if len(latency) % (10 * qps) == 0:
-      tf.logging.info('received {} responses.'.format(len(latency)))
+      tf.logging.debug('received {} responses.'.format(len(latency)))
     if resp.status_code == 200:
       success.append(1)
     else:
@@ -348,7 +341,7 @@ def run_rest_load_test(address, requests, qps):
     thread_lst.append(thread)
     thread.start()
     if i % (10 * qps) == 0:
-      tf.logging.info('sent {} requests.'.format(i))
+      tf.logging.debug('sent {} requests.'.format(i))
 
     # send requests at a constant rate and adjust for the time it took to send previous request
     pause = interval - (time.time() - previous_worker_start)
@@ -369,11 +362,6 @@ def run_rest_load_test(address, requests, qps):
     avg_miss_rate_percent = np.average(miss_rate_percent)
     tf.logging.warn('couldn\'t keep up at current QPS rate, average miss rate:{:.2f}%'.format(avg_miss_rate_percent))
 
-  tf.logging.info('num_qps:{} requests/second: {} #success:{} #error:{} '
-                  'latencies: [avg:{:.2f}ms p50:{:.2f}ms p90:{:.2f}ms p99:{:.2f}ms]'.format(
-                      qps, num_requests / acc_time, sum(success), sum(error),
-                      np.average(latency) * 1000, np.percentile(latency, 50) * 1000,
-                      np.percentile(latency, 90) * 1000, np.percentile(latency, 99) * 1000))
   return {
     'reqested_qps': qps,
     'actual_qps': num_requests / acc_time,
@@ -385,7 +373,9 @@ def run_rest_load_test(address, requests, qps):
     'p90': np.percentile(latency, 90) * 1000,
     'p99': np.percentile(latency, 99) * 1000,
     'avg_miss_rate_percent': avg_miss_rate_percent,
-    '_latency': latency
+    '_latency': latency,
+    '_start_time': start_time,
+    '_end_time': time.time()
   }
 
 def get_rows():
@@ -457,21 +447,24 @@ def merge_results(results, result):
 def merge_worker_results(worker_results):
   success = 0
   error = 0
-  time = 0
   reqested_qps = 0
+  start_time=[]
+  end_time=[]
   latency = []
   avg_miss_rate_percent = []
   for worker_result in worker_results:
     success += worker_result['success']
     error += worker_result['error']
-    time += worker_result['time']
     reqested_qps += worker_result['reqested_qps']
     avg_miss_rate_percent.append(worker_result['avg_miss_rate_percent'])
     latency.extend(worker_result['_latency'])
+    start_time.append(worker_result['_start_time'])
+    end_time.append(worker_result['_end_time'])
 
+  time = np.max(end_time) - np.min(start_time)
   return {
     'reqested_qps': reqested_qps,
-    'actual_qps': success + error / time,
+    'actual_qps': (success + error) / time,
     'success': success,
     'error': error,
     'time': time,
@@ -479,8 +472,18 @@ def merge_worker_results(worker_results):
     'p50': np.percentile(latency, 50) * 1000,
     'p90': np.percentile(latency, 90) * 1000,
     'p99': np.percentile(latency, 99) * 1000,
-    'avg_miss_rate_percent': avg_miss_rate_percent,
+    'avg_miss_rate_percent': np.average(avg_miss_rate_percent),
   }
+
+def print_result(result):
+  v = []
+  for key, value in result.items():
+    if not key.startswith('_'):
+      if 'float' in str(type(value)):
+        v.append('{}: {:.2f}'.format(key, value))
+      else:
+        v.append('{}: {}'.format(key, value))
+  tf.logging.info('\t'.join(v))
 
 def main(argv):
   del argv
@@ -514,6 +517,7 @@ def main(argv):
   if FLAGS.workers == 1:
     for qps in get_qps_range(FLAGS.qps_range):
       result = load_test_func(qps)
+      print_result(result)
       merge_results(results, result)
   else:
     def _load_test_func(qps, worker_results, worker_index):
@@ -531,11 +535,14 @@ def main(argv):
         thread.join()
 
       result = merge_worker_results(worker_results)
+      print_result(result)
       merge_results(results, result)
 
   if FLAGS.csv_report_filename is not None:
     import pandas as pd
-    pd.DataFrame.from_dict(results).to_csv(FLAGS.csv_report_filename)
+    df = pd.DataFrame.from_dict(results)
+    tf.logging.info('\n' + df.to_string())
+    df.to_csv(FLAGS.csv_report_filename)
 
     import matplotlib.pyplot as plt
     plt.figure(figsize=(12,8))
