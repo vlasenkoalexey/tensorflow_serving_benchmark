@@ -19,13 +19,18 @@ from PIL import Image
 import queue as Queue
 import requests as r
 import tensorflow.compat.v1 as tf
+from tensorflow.python.platform import gfile
 
 from tensorflow_serving.apis import predict_pb2
 from tensorflow_serving.apis import prediction_service_pb2_grpc
 
 tf.app.flags.DEFINE_integer('num_requests', 20, 'Total # of requests sent.')
-tf.app.flags.DEFINE_string('qps_range', '', 'Desired client side request QPS in a'
-                           ' python range format: start, stop, step')
+tf.app.flags.DEFINE_string('qps_range', '', 'Desired client side request QPS in'
+                           'one of the following formats:'
+                           'qps - benchmark at one QPS'
+                           'start, stop - benchmark at QPS range [start, stop)'
+                           'start, stop, step - benchmark at QPS range [start, stop) with step'
+                           '[qps1, qps2] - benchmark at give QPS range values')
 tf.app.flags.DEFINE_float('request_timeout', 300.0,
                           'Timeout for inference request.')
 tf.app.flags.DEFINE_string('model_name', '',
@@ -35,7 +40,8 @@ tf.app.flags.DEFINE_string('signature_name', 'serving_default',
 tf.app.flags.DEFINE_string("host", "localhost",
                     "Host name to connect to, localhost by default.")
 tf.app.flags.DEFINE_integer("port", None, "Port to connect to.")
-tf.app.flags.DEFINE_boolean('grpc', True, 'True if gRPC, False if REST.')
+tf.app.flags.DEFINE_enum('mode', 'grpc', ['grpc', 'sync_grpc', 'rest'],
+                         'Benchmark mode: gRPC, synchronous gRPC, or REST')
 tf.app.flags.DEFINE_string('tfrecord_dataset_path', '', 'The path to data.')
 tf.app.flags.DEFINE_string('input_name', 'input',
                            'The name of the model input tensor.')
@@ -82,7 +88,7 @@ class Worker(object):
       self._queue.get()
       self._queue.task_done()
       processed_count = self._num_requests - self._queue.qsize()
-      if processed_count % self._qps == 0:
+      if processed_count % (10 * self._qps) == 0:
         tf.logging.info('received {} responses'.format(processed_count))
 
     def _send_rpc():
@@ -120,7 +126,7 @@ def run_grpc_load_test(requests, qps, stub):
     stub: The model server stub to which send inference requests.
   """
 
-  tf.logging.info('Running GRPC benchmark at {} qps'.format(qps))
+  tf.logging.info('Running gRPC benchmark at {} qps'.format(qps))
   num_requests = len(requests)
   metadata = []
   if FLAGS.api_key:
@@ -131,6 +137,7 @@ def run_grpc_load_test(requests, qps, stub):
     q.put(i)
 
   workers = []
+  miss_rate_percent = []
   start = time.time()
   previous_worker_start = start
   for i in range(num_requests):
@@ -138,10 +145,15 @@ def run_grpc_load_test(requests, qps, stub):
     worker = Worker(i, request, stub, q, qps, num_requests, metadata)
     workers.append(worker)
     worker.start()
-    if i % qps == 0:
+    if i % (qps * 10) == 0:
       tf.logging.info('sent {} requests.'.format(i))
     # send requests at a constant rate and adjust for the time it took to send previous request
-    time.sleep(1.0/qps - (time.time() - previous_worker_start))
+    pause = 1.0/qps - (time.time() - previous_worker_start)
+    if pause > 0:
+      time.sleep(pause)
+    else:
+      missed_delay = 100 * ((time.time() - previous_worker_start) - 1.0/qps) / (1.0/qps)
+      miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
 
   # block until all workers are done
@@ -157,7 +169,10 @@ def run_grpc_load_test(requests, qps, stub):
     latency.append(w.latency)
     worker_end_time = w._end_time if w._end_time > worker_end_time else worker_end_time
 
-  tf.logging.info('num_req:{} duration:{} worker_duration:{}'.format(num_requests, acc_time, worker_end_time - start))
+  avg_miss_rate_percent = 0
+  if len(miss_rate_percent) > 0:
+    avg_miss_rate_percent = np.average(miss_rate_percent)
+    tf.logging.warn('couldn\'t keep up at current QPS rate, average miss rate:{:.2f}%'.format(avg_miss_rate_percent))
 
   tf.logging.info('num_qps:{:.2f} requests/second: {:.2f} #success:{} #error:{} '
                   'latencies: [avg:{:.2f}ms p50:{:.2f}ms p90:{:.2f}ms p99:{:.2f}ms]'.format(
@@ -174,7 +189,94 @@ def run_grpc_load_test(requests, qps, stub):
     'avg_latency': np.average(latency) * 1000,
     'p50': np.percentile(latency, 50) * 1000,
     'p90': np.percentile(latency, 90) * 1000,
-    'p99': np.percentile(latency, 99) * 1000
+    'p99': np.percentile(latency, 99) * 1000,
+    'avg_miss_rate_percent': avg_miss_rate_percent
+  }
+
+
+def run_synchronous_grpc_load_test(requests, qps, stub):
+  """Loadtest the server gRPC endpoint with constant QPS.
+
+  This API is sending gRPC requests in synchronous mode,
+  one request per Thread.
+  Args:
+    requests: List of PredictRequest proto.
+    qps: The number of requests being sent per second.
+    stub: The model server stub to which send inference requests.
+  """
+
+  tf.logging.info('Running gRPC benchmark at {} qps'.format(qps))
+  # List appends are thread safe
+  num_requests = len(requests)
+  success = []
+  error = []
+  latency = []
+  metadata = []
+  if FLAGS.api_key:
+    metadata.append(('x-api-key', FLAGS.api_key))
+
+  def _make_grpc_call(i):
+    """Send GRPC POST request to Tensorflow Serving endpoint."""
+    start_time = time.time()
+    try:
+      resp = stub.Predict(requests[i],
+                      FLAGS.request_timeout,
+                      metadata=metadata)
+      success.append(1)
+    except Exception as e:
+      print(e)
+      error.append(1)
+
+    latency.append(time.time() - start_time)
+    if len(latency) % (qps * 10) == 0:
+      tf.logging.info('received {} responses.'.format(len(latency)))
+
+  thread_lst = []
+  miss_rate_percent = []
+  start_time = time.time()
+  previous_worker_start = start_time
+  for i in range(num_requests):
+    thread = threading.Thread(target=_make_grpc_call, args=(i,))
+    thread_lst.append(thread)
+    thread.start()
+    if i % (qps * 10) == 0:
+      tf.logging.info('sent {} requests.'.format(i))
+
+    # send requests at a constant rate and adjust for the time it took to send previous request
+    pause = 1.0/qps - (time.time() - previous_worker_start)
+    if pause > 0:
+      time.sleep(pause)
+    else:
+      missed_delay = 100 * ((time.time() - previous_worker_start) - 1.0/qps) / (1.0/qps)
+      miss_rate_percent.append(missed_delay)
+    previous_worker_start = time.time()
+
+  for thread in thread_lst:
+    thread.join()
+
+  acc_time = time.time() - start_time
+
+  avg_miss_rate_percent = 0
+  if len(miss_rate_percent) > 0:
+    avg_miss_rate_percent = np.average(miss_rate_percent)
+    tf.logging.warn('couldn\'t keep up at current QPS rate, average miss rate:{:.2f}%'.format(avg_miss_rate_percent))
+
+  tf.logging.info('num_qps:{} requests/second: {:.2f} #success:{} #error:{} '
+                  'latencies: [avg:{:.2f}ms p50:{:.2f}ms p90:{:.2f}ms p99:{:.2f}ms]'.format(
+                      qps, num_requests / acc_time, sum(success), sum(error),
+                      np.average(latency) * 1000, np.percentile(latency, 50) * 1000,
+                      np.percentile(latency, 90) * 1000, np.percentile(latency, 99) * 1000))
+  return {
+    'reqested_qps': qps,
+    'actual_qps': num_requests / acc_time,
+    'success': sum(success),
+    'error': sum(error),
+    'time': acc_time,
+    'avg_latency': np.average(latency) * 1000,
+    'p50': np.percentile(latency, 50) * 1000,
+    'p90': np.percentile(latency, 90) * 1000,
+    'p99': np.percentile(latency, 99) * 1000,
+    'avg_miss_rate_percent': avg_miss_rate_percent
   }
 
 
@@ -196,7 +298,7 @@ def run_rest_load_test(requests, qps, address):
     start_time = time.time()
     resp = r.post(address, data=requests[i])
     latency.append(time.time() - start_time)
-    if len(latency) % qps == 0:
+    if len(latency) % (10 * qps) == 0:
       tf.logging.info('received {} responses.'.format(len(latency)))
     if resp.status_code == 200:
       success.append(1)
@@ -205,25 +307,36 @@ def run_rest_load_test(requests, qps, address):
       error.append(1)
     resp.close()
 
+  thread_lst = []
+  miss_rate_percent = []
   start_time = time.time()
   previous_worker_start = start_time
-
-  thread_lst = []
   for i in range(num_requests):
     thread = threading.Thread(target=_make_rest_call, args=(i,))
     thread_lst.append(thread)
     thread.start()
-    if i % qps == 0:
+    if i % (10 * qps) == 0:
       tf.logging.info('sent {} requests.'.format(i))
 
     # send requests at a constant rate and adjust for the time it took to send previous request
-    time.sleep(1.0/qps - (time.time() - previous_worker_start))
+    pause = 1.0/qps - (time.time() - previous_worker_start)
+    if pause > 0:
+      time.sleep(pause)
+    else:
+      missed_delay = 100 * ((time.time() - previous_worker_start) - 1.0/qps) / (1.0/qps)
+      miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
 
   for thread in thread_lst:
     thread.join()
 
   acc_time = time.time() - start_time
+
+  avg_miss_rate_percent = 0
+  if len(miss_rate_percent) > 0:
+    avg_miss_rate_percent = np.average(miss_rate_percent)
+    tf.logging.warn('couldn\'t keep up at current QPS rate, average miss rate:{:.2f}%'.format(avg_miss_rate_percent))
+
   tf.logging.info('num_qps:{} requests/second: {} #success:{} #error:{} '
                   'latencies: [avg:{:.2f}ms p50:{:.2f}ms p90:{:.2f}ms p99:{:.2f}ms]'.format(
                       qps, num_requests / acc_time, sum(success), sum(error),
@@ -238,12 +351,13 @@ def run_rest_load_test(requests, qps, address):
     'avg_latency': np.average(latency) * 1000,
     'p50': np.percentile(latency, 50) * 1000,
     'p90': np.percentile(latency, 90) * 1000,
-    'p99': np.percentile(latency, 99) * 1000
+    'p99': np.percentile(latency, 99) * 1000,
+    'avg_miss_rate_percent': avg_miss_rate_percent
   }
 
 def get_rows():
   tf.logging.info("loading data for prediction")
-  dataset = tf.data.TFRecordDataset([FLAGS.tfrecord_dataset_path])
+  dataset = tf.data.TFRecordDataset(gfile.Glob(FLAGS.tfrecord_dataset_path))
   if FLAGS.batch_size is not None:
       dataset = dataset.batch(FLAGS.batch_size)
   rows = []
@@ -279,7 +393,14 @@ def generate_grpc_request(tfrecord_row):
   request.inputs[FLAGS.input_name].CopyFrom(tf.make_tensor_proto(tfrecord_row, dtype=tf.string))
   return request
 
+
 def get_qps_range(qps_range_string):
+  qps_range_string = qps_range_string.strip()
+  if qps_range_string.startswith('[') and qps_range_string.endswith(']'):
+    qps_range_string = qps_range_string.lstrip('[').rstrip(']')
+    qps_range_list = list(map(lambda v: int(v), qps_range_string.split(',')))
+    return qps_range_list
+
   qps_range_list = list(map(lambda v: int(v), qps_range_string.split(',')))
   qps_range_start = 0
   qps_range_step = 1
@@ -315,19 +436,21 @@ def main(argv):
 
   results = {}
 
-  if FLAGS.grpc:
+  if FLAGS.mode == 'grpc' or FLAGS.mode == 'sync_grpc':
     grpc_requests = [generate_grpc_request(row) for row in rows]
     grpc_channel = grpc.insecure_channel(address)
     stub = prediction_service_pb2_grpc.PredictionServiceStub(grpc_channel)
     for qps in get_qps_range(FLAGS.qps_range):
-      result = run_grpc_load_test(grpc_requests, qps, stub)
+      result = run_grpc_load_test(grpc_requests, qps, stub) \
+        if FLAGS.mode == 'grpc' else run_synchronous_grpc_load_test(grpc_requests, qps, stub)
       merge_results(results, result)
-
-  else:
+  elif FLAGS.mode == 'rest':
     rest_requests = [generate_rest_request(row) for row in rows]
     for qps in get_qps_range(FLAGS.qps_range):
       result = run_rest_load_test(rest_requests, qps, address)
       merge_results(results, result)
+  else:
+    raise ValueError('Invalid --mode:' + FLAGS.mode)
 
   if FLAGS.csv_report_filename is not None:
     import pandas as pd
@@ -335,10 +458,10 @@ def main(argv):
 
     import matplotlib.pyplot as plt
     plt.figure(figsize=(12,8))
-    plt.plot('reqested_qps', 'p50', data=results, label='p50')
-    plt.plot('reqested_qps', 'p90', data=results, label='p90')
-    plt.plot('reqested_qps', 'p99', data=results, label='p99')
-    plt.plot('reqested_qps', 'avg_latency', data=results, label='avg_latency')
+    plt.plot('actual_qps', 'p50', data=results, label='p50')
+    plt.plot('actual_qps', 'p90', data=results, label='p90')
+    plt.plot('actual_qps', 'p99', data=results, label='p99')
+    plt.plot('actual_qps', 'avg_latency', data=results, label='avg_latency')
     plt.legend()
     plt.savefig(FLAGS.csv_report_filename + '.png')
 
