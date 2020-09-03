@@ -24,6 +24,8 @@ from tensorflow.python.platform import gfile
 from tensorflow_serving.apis import predict_pb2
 from tensorflow_serving.apis import prediction_service_pb2_grpc
 
+import distribution
+
 tf.app.flags.DEFINE_integer('num_requests', 20, 'Total # of requests sent.')
 tf.app.flags.DEFINE_string('qps_range', '', 'Desired client side request QPS in'
                            'one of the following formats:'
@@ -42,6 +44,8 @@ tf.app.flags.DEFINE_string("host", "localhost",
 tf.app.flags.DEFINE_integer("port", None, "Port to connect to.")
 tf.app.flags.DEFINE_enum('mode', 'grpc', ['grpc', 'sync_grpc', 'rest'],
                          'Benchmark mode: gRPC, synchronous gRPC, or REST')
+tf.app.flags.DEFINE_enum('distribution', 'uniform', ['uniform', 'poisson', 'pareto'],
+                         'Distribution')
 tf.app.flags.DEFINE_string('tfrecord_dataset_path', '', 'The path to data.')
 tf.app.flags.DEFINE_string('input_name', 'input',
                            'The name of the model input tensor.')
@@ -127,14 +131,17 @@ def run_grpc_load_test(requests, qps, stub):
   """
 
   tf.logging.info('Running gRPC benchmark at {} qps'.format(qps))
+  dist = distribution.Distribution.factory(FLAGS.distribution, qps)
   num_requests = len(requests)
   metadata = []
   if FLAGS.api_key:
     metadata.append(('x-api-key', FLAGS.api_key))
 
   q = Queue.Queue()
+  intervals = []
   for i in range(num_requests):
     q.put(i)
+    intervals.append(dist.next())
 
   workers = []
   miss_rate_percent = []
@@ -142,17 +149,18 @@ def run_grpc_load_test(requests, qps, stub):
   previous_worker_start = start
   for i in range(num_requests):
     request = requests[i]
+    interval = intervals[i]
     worker = Worker(i, request, stub, q, qps, num_requests, metadata)
     workers.append(worker)
     worker.start()
     if i % (qps * 10) == 0:
       tf.logging.info('sent {} requests.'.format(i))
     # send requests at a constant rate and adjust for the time it took to send previous request
-    pause = 1.0/qps - (time.time() - previous_worker_start)
+    pause = interval - (time.time() - previous_worker_start)
     if pause > 0:
       time.sleep(pause)
     else:
-      missed_delay = 100 * ((time.time() - previous_worker_start) - 1.0/qps) / (1.0/qps)
+      missed_delay = 100 * ((time.time() - previous_worker_start) - interval) / (interval)
       miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
 
@@ -214,6 +222,7 @@ def run_synchronous_grpc_load_test(requests, qps, stub):
   metadata = []
   if FLAGS.api_key:
     metadata.append(('x-api-key', FLAGS.api_key))
+  dist = distribution.Distribution.factory(FLAGS.distribution, qps)
 
   def _make_grpc_call(i):
     """Send GRPC POST request to Tensorflow Serving endpoint."""
@@ -231,11 +240,16 @@ def run_synchronous_grpc_load_test(requests, qps, stub):
     if len(latency) % (qps * 10) == 0:
       tf.logging.info('received {} responses.'.format(len(latency)))
 
+  intervals = []
+  for i in range(num_requests):
+    intervals.append(dist.next())
+
   thread_lst = []
   miss_rate_percent = []
   start_time = time.time()
   previous_worker_start = start_time
   for i in range(num_requests):
+    interval = intervals[i]
     thread = threading.Thread(target=_make_grpc_call, args=(i,))
     thread_lst.append(thread)
     thread.start()
@@ -243,11 +257,11 @@ def run_synchronous_grpc_load_test(requests, qps, stub):
       tf.logging.info('sent {} requests.'.format(i))
 
     # send requests at a constant rate and adjust for the time it took to send previous request
-    pause = 1.0/qps - (time.time() - previous_worker_start)
+    pause = interval - (time.time() - previous_worker_start)
     if pause > 0:
       time.sleep(pause)
     else:
-      missed_delay = 100 * ((time.time() - previous_worker_start) - 1.0/qps) / (1.0/qps)
+      missed_delay = 100 * ((time.time() - previous_worker_start) - interval) / (interval)
       miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
 
@@ -286,6 +300,7 @@ def run_rest_load_test(requests, qps, address):
   tf.logging.info('Running REST benchmark at {} qps'.format(qps))
 
   address = 'http://{}/v1/models/{}:predict'.format(address, FLAGS.model_name)
+  dist = distribution.Distribution.factory(FLAGS.distribution, qps)
 
   # List appends are thread safe
   num_requests = len(requests)
@@ -307,11 +322,16 @@ def run_rest_load_test(requests, qps, address):
       error.append(1)
     resp.close()
 
+  intervals = []
+  for i in range(num_requests):
+    intervals.append(dist.next())
+
   thread_lst = []
   miss_rate_percent = []
   start_time = time.time()
   previous_worker_start = start_time
   for i in range(num_requests):
+    interval = intervals[i]
     thread = threading.Thread(target=_make_rest_call, args=(i,))
     thread_lst.append(thread)
     thread.start()
@@ -319,11 +339,11 @@ def run_rest_load_test(requests, qps, address):
       tf.logging.info('sent {} requests.'.format(i))
 
     # send requests at a constant rate and adjust for the time it took to send previous request
-    pause = 1.0/qps - (time.time() - previous_worker_start)
+    pause = interval - (time.time() - previous_worker_start)
     if pause > 0:
       time.sleep(pause)
     else:
-      missed_delay = 100 * ((time.time() - previous_worker_start) - 1.0/qps) / (1.0/qps)
+      missed_delay = 100 * ((time.time() - previous_worker_start) - interval) / (interval)
       miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
 
