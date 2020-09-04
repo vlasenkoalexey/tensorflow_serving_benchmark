@@ -378,9 +378,9 @@ def run_rest_load_test(address, requests, qps):
     '_end_time': time.time()
   }
 
-def get_rows():
+def get_rows(path, count):
   tf.logging.info("loading data for prediction")
-  dataset = tf.data.TFRecordDataset(gfile.Glob(FLAGS.tfrecord_dataset_path))
+  dataset = tf.data.TFRecordDataset(path)
   if FLAGS.batch_size is not None:
       dataset = dataset.batch(FLAGS.batch_size)
   rows = []
@@ -388,7 +388,7 @@ def get_rows():
   next = itr.get_next()
   with tf.Session() as sess:
       sess.run(itr.initializer)
-      for _ in range(FLAGS.num_requests):
+      for _ in range(count):
           inputs = sess.run(next)
           rows.append(inputs)
   return rows
@@ -497,31 +497,33 @@ def main(argv):
   tf.logging.info('ModelServer at: {}'.format(address))
 
   tf.logging.info('Loading data')
-  rows = get_rows()
+  rows = get_rows(FLAGS.tfrecord_dataset_path, FLAGS.num_requests * FLAGS.workers)
 
   results = {}
   load_test_func = None
+  requests = None
 
   if FLAGS.mode == 'grpc' or FLAGS.mode == 'sync_grpc':
-    grpc_requests = [generate_grpc_request(row) for row in rows]
+    requests = [generate_grpc_request(row) for row in rows]
     if FLAGS.mode == 'grpc':
-      load_test_func = functools.partial(run_grpc_load_test, address, grpc_requests)
+      load_test_func = functools.partial(run_grpc_load_test, address)
     else:
-      load_test_func = functools.partial(run_synchronous_grpc_load_test, address, grpc_requests)
+      load_test_func = functools.partial(run_synchronous_grpc_load_test, address)
   elif FLAGS.mode == 'rest':
-    rest_requests = [generate_rest_request(row) for row in rows]
-    load_test_func = functools.partial(run_rest_load_test, address, rest_requests)
+    requests = [generate_rest_request(row) for row in rows]
+    load_test_func = functools.partial(run_rest_load_test, address)
   else:
     raise ValueError('Invalid --mode:' + FLAGS.mode)
 
   if FLAGS.workers == 1:
     for qps in get_qps_range(FLAGS.qps_range):
-      result = load_test_func(qps)
+      result = load_test_func(requests, qps)
       print_result(result)
       merge_results(results, result)
   else:
     def _load_test_func(qps, worker_results, worker_index):
-      worker_results[worker_index] = load_test_func(qps)
+      worker_requests = requests[worker_index * FLAGS.num_requests:(worker_index + 1) * FLAGS.num_requests]
+      worker_results[worker_index] = load_test_func(worker_requests, qps)
     for qps in get_qps_range(FLAGS.qps_range):
       worker_threads = []
       worker_results = []
