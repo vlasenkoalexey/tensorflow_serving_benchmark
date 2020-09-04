@@ -15,8 +15,10 @@ import time
 import grpc
 import functools
 
+from google.protobuf.json_format import Parse as ProtoParseJson
+
 import numpy as np
-from PIL import Image
+from itertools import cycle, islice
 import queue as Queue
 import requests as r
 import tensorflow.compat.v1 as tf
@@ -48,6 +50,7 @@ tf.app.flags.DEFINE_enum('mode', 'grpc', ['grpc', 'sync_grpc', 'rest'],
 tf.app.flags.DEFINE_enum('distribution', 'uniform', ['uniform', 'poisson', 'pareto'],
                          'Distribution')
 tf.app.flags.DEFINE_string('tfrecord_dataset_path', '', 'The path to data.')
+tf.app.flags.DEFINE_string('requests_file_path', '', 'The path to data.')
 tf.app.flags.DEFINE_string('input_name', 'input',
                            'The name of the model input tensor.')
 tf.app.flags.DEFINE_integer('batch_size', 8, 'Per request batch size.')
@@ -380,7 +383,9 @@ def run_rest_load_test(address, requests, qps):
 
 def get_rows(path, count):
   tf.logging.info("loading data for prediction")
-  dataset = tf.data.TFRecordDataset(path)
+  compression_type = 'GZIP' if path.endswith('.gz') else None
+  dataset = tf.data.TFRecordDataset(gfile.Glob(path),
+    compression_type = compression_type)
   if FLAGS.batch_size is not None:
       dataset = dataset.batch(FLAGS.batch_size)
   rows = []
@@ -416,6 +421,33 @@ def generate_grpc_request(tfrecord_row):
   request.inputs[FLAGS.input_name].CopyFrom(tf.make_tensor_proto(tfrecord_row, dtype=tf.string))
   return request
 
+
+def get_requests():
+  if FLAGS.tfrecord_dataset_path != '':
+    rows = get_rows(FLAGS.tfrecord_dataset_path, FLAGS.num_requests * FLAGS.workers)
+    if FLAGS.mode == 'grpc' or FLAGS.mode == 'sync_grpc':
+      return [generate_grpc_request(row) for row in rows]
+    elif FLAGS.mode == 'rest':
+      return [generate_rest_request(row) for row in rows]
+    else:
+      raise ValueError('Invalid --mode:' + FLAGS.mode)
+  elif FLAGS.requests_file_path != '':
+    if FLAGS.mode == 'grpc' or FLAGS.mode == 'sync_grpc':
+      with open(FLAGS.requests_file_path, 'r') as f:
+        j = json.load(f)
+        rows = [ProtoParseJson(json.dumps(row), predict_pb2.PredictRequest()) for row in j]
+        rows = list(islice(cycle(rows), FLAGS.num_requests * FLAGS.workers))
+        return rows
+    elif FLAGS.mode == 'rest':
+      with open(FLAGS.requests_file_path, 'r') as f:
+        j = json.load(f)
+        rows = [row for row in j]
+        rows = list(islice(cycle(rows), FLAGS.num_requests * FLAGS.workers))
+        return rows
+    else:
+      raise ValueError('Invalid --mode:' + FLAGS.mode)
+  else:
+    raise ValueError('Either tfrecord_dataset_path or requests_file_path flag has to be specified')
 
 def get_qps_range(qps_range_string):
   qps_range_string = qps_range_string.strip()
@@ -497,20 +529,17 @@ def main(argv):
   tf.logging.info('ModelServer at: {}'.format(address))
 
   tf.logging.info('Loading data')
-  rows = get_rows(FLAGS.tfrecord_dataset_path, FLAGS.num_requests * FLAGS.workers)
+  requests = get_requests()
 
   results = {}
   load_test_func = None
-  requests = None
 
   if FLAGS.mode == 'grpc' or FLAGS.mode == 'sync_grpc':
-    requests = [generate_grpc_request(row) for row in rows]
     if FLAGS.mode == 'grpc':
       load_test_func = functools.partial(run_grpc_load_test, address)
     else:
       load_test_func = functools.partial(run_synchronous_grpc_load_test, address)
   elif FLAGS.mode == 'rest':
-    requests = [generate_rest_request(row) for row in rows]
     load_test_func = functools.partial(run_rest_load_test, address)
   else:
     raise ValueError('Invalid --mode:' + FLAGS.mode)
