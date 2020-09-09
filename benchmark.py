@@ -33,10 +33,10 @@ tf.app.flags.DEFINE_string(
     "",
     "Desired client side request QPS in"
     "one of the following formats:"
-    "qps - benchmark at one QPS"
-    "start, stop - benchmark at QPS range [start, stop)"
-    "start, stop, step - benchmark at QPS range [start, stop) with step"
-    "[qps1, qps2] - benchmark at give QPS range values",
+    " - qps - benchmark at one QPS"
+    " - start, stop - benchmark at QPS range [start, stop)"
+    " - start, stop, step - benchmark at QPS range [start, stop) with step"
+    " - [qps1, qps2] - benchmark at give QPS range values",
 )
 tf.app.flags.DEFINE_float("request_timeout", 300.0,
                           "Timeout for inference request.")
@@ -61,8 +61,10 @@ tf.app.flags.DEFINE_enum(
 tf.app.flags.DEFINE_enum(
     "distribution", "uniform", ["uniform", "poisson", "pareto"], "Distribution"
 )
-tf.app.flags.DEFINE_string("tfrecord_dataset_path", "", "The path to data.")
-tf.app.flags.DEFINE_string("requests_file_path", "", "The path to data.")
+tf.app.flags.DEFINE_string("tfrecord_dataset_path", "",
+    "The path to data in tfrecord or tfrecord.gz format.")
+tf.app.flags.DEFINE_string("requests_file_path", "",
+    "The path the requests file in json format.")
 tf.app.flags.DEFINE_string(
     "input_name", "input", "The name of the model input tensor.")
 tf.app.flags.DEFINE_integer("batch_size", 8, "Per request batch size.")
