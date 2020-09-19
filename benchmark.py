@@ -14,11 +14,15 @@ import grpc
 import io
 import json
 import numpy as np
+import os
 import queue as Queue
 import requests as r
-import tensorflow.compat.v1 as tf
 import threading
 import time
+
+# Disable GPU, so tensorflow initializes faster
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+import tensorflow.compat.v1 as tf
 
 from google.protobuf.json_format import Parse as ProtoParseJson
 from tensorflow.python.platform import gfile
@@ -638,7 +642,7 @@ def main(argv):
       print_result(result)
       merge_results(results, result)
 
-  if FLAGS.csv_report_filename is not None:
+  if FLAGS.csv_report_filename is not None and FLAGS.csv_report_filename != '':
     import pandas as pd
 
     df = pd.DataFrame.from_dict(results)
