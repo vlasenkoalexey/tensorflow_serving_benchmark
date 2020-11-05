@@ -25,11 +25,11 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import tensorflow.compat.v1 as tf
 
 from google.protobuf.json_format import Parse as ProtoParseJson
+from tensorflow.core.framework import types_pb2
 from tensorflow.python.platform import gfile
 from itertools import cycle, islice
 from tensorflow_serving.apis import predict_pb2
 from tensorflow_serving.apis import prediction_service_pb2_grpc
-
 
 tf.app.flags.DEFINE_integer("num_requests", 20, "Total # of requests sent.")
 tf.app.flags.DEFINE_string(
@@ -45,16 +45,14 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_float("request_timeout", 300.0,
                           "Timeout for inference request.")
 tf.app.flags.DEFINE_string(
-    "model_name", "", "Name of the model being served on the ModelServer"
-)
+    "model_name", "", "Name of the model being served on the ModelServer")
 tf.app.flags.DEFINE_string(
     "signature_name",
     "serving_default",
     "Name of the model signature on the ModelServer",
 )
-tf.app.flags.DEFINE_string(
-    "host", "localhost", "Host name to connect to, localhost by default."
-)
+tf.app.flags.DEFINE_string("host", "localhost",
+                           "Host name to connect to, localhost by default.")
 tf.app.flags.DEFINE_integer("port", None, "Port to connect to.")
 tf.app.flags.DEFINE_enum(
     "mode",
@@ -62,23 +60,27 @@ tf.app.flags.DEFINE_enum(
     ["grpc", "sync_grpc", "rest"],
     "Benchmark mode: gRPC, synchronous gRPC, or REST",
 )
-tf.app.flags.DEFINE_enum(
-    "distribution", "uniform", ["uniform", "poisson", "pareto"], "Distribution"
-)
-tf.app.flags.DEFINE_string("tfrecord_dataset_path", "",
-    "The path to data in tfrecord or tfrecord.gz format.")
-tf.app.flags.DEFINE_string("requests_file_path", "",
-    "The path the requests file in json format.")
+tf.app.flags.DEFINE_enum("distribution", "uniform",
+                         ["uniform", "poisson", "pareto"], "Distribution")
 tf.app.flags.DEFINE_string(
-    "input_name", "input", "The name of the model input tensor.")
-tf.app.flags.DEFINE_integer("batch_size", 8, "Per request batch size.")
+    "tfrecord_dataset_path", "",
+    "The path to data in tfrecord or tfrecord.gz format.")
+tf.app.flags.DEFINE_string(
+    "requests_file_path",
+    "",
+    "The path the predict_pb2.PredictRequest requests file serialized in json format.",
+)
+tf.app.flags.DEFINE_string("jsonl_file_path", "",
+                           "The path the dataset file in jsonl format.")
+tf.app.flags.DEFINE_string("input_name", "input",
+                           "The name of the model input tensor.")
+tf.app.flags.DEFINE_integer("batch_size", None, "Per request batch size.")
 tf.app.flags.DEFINE_integer("workers", 1, "Number of workers.")
 tf.app.flags.DEFINE_string(
-    "api_key", "", "API Key for ESP service if authenticating external requests."
-)
+    "api_key", "",
+    "API Key for ESP service if authenticating external requests.")
 tf.app.flags.DEFINE_string("csv_report_filename", "",
                            "Filename to generate report")
-
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -113,7 +115,6 @@ class Worker(object):
 
   def start(self):
     """Start to send request."""
-
     def _callback(resp_future):
       """Callback for aynchronous inference request sent."""
       exception = resp_future.exception()
@@ -131,9 +132,9 @@ class Worker(object):
 
     def _send_rpc():
       self._start_time = time.time()
-      resp_future = self._stub.Predict.future(
-          self._request, FLAGS.request_timeout, metadata=self._metadata
-      )
+      resp_future = self._stub.Predict.future(self._request,
+                                              FLAGS.request_timeout,
+                                              metadata=self._metadata)
       resp_future.add_done_callback(_callback)
 
     _send_rpc()
@@ -158,11 +159,11 @@ class Worker(object):
 
 def run_grpc_load_test(address, requests, qps):
   """Loadtest the server gRPC endpoint with constant QPS.
-  Args:
-    address: The model server address to which send inference requests.
-    requests: List of PredictRequest proto.
-    qps: The number of requests being sent per second.
-  """
+    Args:
+      address: The model server address to which send inference requests.
+      requests: Iterable of PredictRequest proto.
+      qps: The number of requests being sent per second.
+    """
 
   tf.logging.info("Running gRPC benchmark at {} qps".format(qps))
 
@@ -170,23 +171,26 @@ def run_grpc_load_test(address, requests, qps):
   stub = prediction_service_pb2_grpc.PredictionServiceStub(grpc_channel)
 
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
-  num_requests = len(requests)
   metadata = []
   if FLAGS.api_key:
     metadata.append(("x-api-key", FLAGS.api_key))
 
   q = Queue.Queue()
   intervals = []
+
+  num_requests = FLAGS.num_requests
+
   for i in range(num_requests):
     q.put(i)
     intervals.append(dist.next())
+    i = i + 1
 
+  i = 0
   workers = []
   miss_rate_percent = []
   start_time = time.time()
   previous_worker_start = start_time
-  for i in range(num_requests):
-    request = requests[i]
+  for request in requests:
     interval = intervals[i]
     worker = Worker(i, request, stub, q, qps, num_requests, metadata)
     workers.append(worker)
@@ -198,11 +202,14 @@ def run_grpc_load_test(address, requests, qps):
     if pause > 0:
       time.sleep(pause)
     else:
-      missed_delay = (
-          100 * ((time.time() - previous_worker_start) - interval) / (interval)
-      )
+      missed_delay = (100 *
+                      ((time.time() - previous_worker_start) - interval) /
+                      (interval))
       miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
+    i = i + 1
+
+  assert i == num_requests
 
   # block until all workers are done
   q.join()
@@ -215,18 +222,15 @@ def run_grpc_load_test(address, requests, qps):
     success_count += w.success_count
     error_count += w.error_count
     latency.append(w.latency)
-    worker_end_time = (
-        w._end_time if w._end_time > worker_end_time else worker_end_time
-    )
+    worker_end_time = (w._end_time
+                       if w._end_time > worker_end_time else worker_end_time)
 
   avg_miss_rate_percent = 0
   if len(miss_rate_percent) > 0:
     avg_miss_rate_percent = np.average(miss_rate_percent)
     tf.logging.warn(
-        "couldn't keep up at current QPS rate, average miss rate:{:.2f}%".format(
-            avg_miss_rate_percent
-        )
-    )
+        "couldn't keep up at current QPS rate, average miss rate:{:.2f}%".
+        format(avg_miss_rate_percent))
 
   return {
       "reqested_qps": qps,
@@ -248,13 +252,13 @@ def run_grpc_load_test(address, requests, qps):
 def run_synchronous_grpc_load_test(address, requests, qps):
   """Loadtest the server gRPC endpoint with constant QPS.
 
-  This API is sending gRPC requests in synchronous mode,
-  one request per Thread.
-  Args:
-    address: The model server address to which send inference requests.
-    requests: List of PredictRequest proto.
-    qps: The number of requests being sent per second.
-  """
+    This API is sending gRPC requests in synchronous mode,
+    one request per Thread.
+    Args:
+      address: The model server address to which send inference requests.
+      requests: Iterable of PredictRequest proto.
+      qps: The number of requests being sent per second.
+    """
 
   tf.logging.info("Running synchronous gRPC benchmark at {} qps".format(qps))
 
@@ -262,7 +266,7 @@ def run_synchronous_grpc_load_test(address, requests, qps):
   stub = prediction_service_pb2_grpc.PredictionServiceStub(grpc_channel)
 
   # List appends are thread safe
-  num_requests = len(requests)
+  num_requests = FLAGS.num_requests
   success = []
   error = []
   latency = []
@@ -271,12 +275,11 @@ def run_synchronous_grpc_load_test(address, requests, qps):
     metadata.append(("x-api-key", FLAGS.api_key))
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
 
-  def _make_grpc_call(i):
-    """Send GRPC POST request to Tensorflow Serving endpoint."""
+  def _make_grpc_call(i, request):
+    """Send GRPC request to Tensorflow Serving endpoint."""
     start_time = time.time()
     try:
-      resp = stub.Predict(
-          requests[i], FLAGS.request_timeout, metadata=metadata)
+      resp = stub.Predict(request, FLAGS.request_timeout, metadata=metadata)
       success.append(1)
     except Exception as e:
       print(e)
@@ -294,9 +297,10 @@ def run_synchronous_grpc_load_test(address, requests, qps):
   miss_rate_percent = []
   start_time = time.time()
   previous_worker_start = start_time
-  for i in range(num_requests):
+  i = 0
+  for request in requests:
     interval = intervals[i]
-    thread = threading.Thread(target=_make_grpc_call, args=(i,))
+    thread = threading.Thread(target=_make_grpc_call, args=(i, request))
     thread_lst.append(thread)
     thread.start()
     if i % (qps * 10) == 0:
@@ -307,11 +311,14 @@ def run_synchronous_grpc_load_test(address, requests, qps):
     if pause > 0:
       time.sleep(pause)
     else:
-      missed_delay = (
-          100 * ((time.time() - previous_worker_start) - interval) / (interval)
-      )
+      missed_delay = (100 *
+                      ((time.time() - previous_worker_start) - interval) /
+                      (interval))
       miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
+    i = i + 1
+
+  assert i == num_requests
 
   for thread in thread_lst:
     thread.join()
@@ -322,10 +329,8 @@ def run_synchronous_grpc_load_test(address, requests, qps):
   if len(miss_rate_percent) > 0:
     avg_miss_rate_percent = np.average(miss_rate_percent)
     tf.logging.warn(
-        "couldn't keep up at current QPS rate, average miss rate:{:.2f}%".format(
-            avg_miss_rate_percent
-        )
-    )
+        "couldn't keep up at current QPS rate, average miss rate:{:.2f}%".
+        format(avg_miss_rate_percent))
 
   return {
       "reqested_qps": qps,
@@ -345,7 +350,13 @@ def run_synchronous_grpc_load_test(address, requests, qps):
 
 
 def run_rest_load_test(address, requests, qps):
-  """Run inference load test against REST endpoint."""
+  """Loadtest the server REST endpoint with constant QPS.
+
+    Args:
+      address: The model server address to which send inference requests.
+      requests: Iterable of POST request bodies.
+      qps: The number of requests being sent per second.
+    """
 
   tf.logging.info("Running REST benchmark at {} qps".format(qps))
 
@@ -353,15 +364,15 @@ def run_rest_load_test(address, requests, qps):
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
 
   # List appends are thread safe
-  num_requests = len(requests)
+  num_requests = FLAGS.num_requests
   success = []
   error = []
   latency = []
 
-  def _make_rest_call(i):
+  def _make_rest_call(i, request):
     """Send REST POST request to Tensorflow Serving endpoint."""
     start_time = time.time()
-    resp = r.post(address, data=requests[i])
+    resp = r.post(address, data=request)
     latency.append(time.time() - start_time)
     if len(latency) % (10 * qps) == 0:
       tf.logging.debug("received {} responses.".format(len(latency)))
@@ -380,9 +391,10 @@ def run_rest_load_test(address, requests, qps):
   miss_rate_percent = []
   start_time = time.time()
   previous_worker_start = start_time
-  for i in range(num_requests):
+  i = 0
+  for request in requests:
     interval = intervals[i]
-    thread = threading.Thread(target=_make_rest_call, args=(i,))
+    thread = threading.Thread(target=_make_rest_call, args=(i, request))
     thread_lst.append(thread)
     thread.start()
     if i % (10 * qps) == 0:
@@ -393,11 +405,14 @@ def run_rest_load_test(address, requests, qps):
     if pause > 0:
       time.sleep(pause)
     else:
-      missed_delay = (
-          100 * ((time.time() - previous_worker_start) - interval) / (interval)
-      )
+      missed_delay = (100 *
+                      ((time.time() - previous_worker_start) - interval) /
+                      (interval))
       miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
+    i = i + 1
+
+  assert i == num_requests
 
   for thread in thread_lst:
     thread.join()
@@ -408,10 +423,8 @@ def run_rest_load_test(address, requests, qps):
   if len(miss_rate_percent) > 0:
     avg_miss_rate_percent = np.average(miss_rate_percent)
     tf.logging.warn(
-        "couldn't keep up at current QPS rate, average miss rate:{:.2f}%".format(
-            avg_miss_rate_percent
-        )
-    )
+        "couldn't keep up at current QPS rate, average miss rate:{:.2f}%".
+        format(avg_miss_rate_percent))
 
   return {
       "reqested_qps": qps,
@@ -433,9 +446,8 @@ def run_rest_load_test(address, requests, qps):
 def get_rows(path, count):
   tf.logging.info("loading data for prediction")
   compression_type = "GZIP" if path.endswith(".gz") else None
-  dataset = tf.data.TFRecordDataset(
-      gfile.Glob(path), compression_type=compression_type
-  )
+  dataset = tf.data.TFRecordDataset(gfile.Glob(path),
+                                    compression_type=compression_type)
   if FLAGS.batch_size is not None:
     dataset = dataset.batch(FLAGS.batch_size)
   rows = []
@@ -454,12 +466,12 @@ def generate_rest_request(tfrecord_row):
 
   examples = [{"b64": base64.b64encode(row).decode()} for row in tfrecord_row]
 
-  payload = json.dumps(
-      {
-          "signature_name": FLAGS.signature_name,
-          "inputs": {FLAGS.input_name: examples},
-      }
-  )
+  payload = json.dumps({
+      "signature_name": FLAGS.signature_name,
+      "inputs": {
+          FLAGS.input_name: examples
+      },
+  })
   return payload
 
 
@@ -470,8 +482,21 @@ def generate_grpc_request(tfrecord_row):
   request.model_spec.name = FLAGS.model_name
   request.model_spec.signature_name = FLAGS.signature_name
   request.inputs[FLAGS.input_name].CopyFrom(
-      tf.make_tensor_proto(tfrecord_row, dtype=tf.string)
-  )
+      tf.make_tensor_proto(tfrecord_row, dtype=tf.string))
+  return request
+
+
+def generate_grpc_request_from_dictionary(row_dict):
+  """Generate gRPC inference request with payload."""
+
+  request = predict_pb2.PredictRequest()
+  request.model_spec.name = FLAGS.model_name
+  request.model_spec.signature_name = FLAGS.signature_name
+  for key, value in row_dict.items():
+    proto = tf.make_tensor_proto(value)
+    if proto.dtype == types_pb2.DT_INT32 or "values" in key:
+      proto = tf.make_tensor_proto(value, types_pb2.DT_INT64)
+    request.inputs[key].CopyFrom(proto)
   return request
 
 
@@ -493,16 +518,22 @@ def get_requests():
             ProtoParseJson(json.dumps(row), predict_pb2.PredictRequest())
             for row in j
         ]
-        rows = list(islice(cycle(rows), FLAGS.num_requests * FLAGS.workers))
         return rows
     elif FLAGS.mode == "rest":
       with open(FLAGS.requests_file_path, "r") as f:
         j = json.load(f)
         rows = [row for row in j]
-        rows = list(islice(cycle(rows), FLAGS.num_requests * FLAGS.workers))
         return rows
     else:
       raise ValueError("Invalid --mode:" + FLAGS.mode)
+  elif FLAGS.jsonl_file_path != "":
+    rows = []
+    with open(FLAGS.jsonl_file_path, "r") as f:
+      for line in f:
+        row_dict = eval(line)
+        rows.append(generate_grpc_request_from_dictionary(row_dict))
+    return rows
+
   else:
     raise ValueError(
         "Either tfrecord_dataset_path or requests_file_path flag has to be specified"
@@ -595,6 +626,15 @@ def main(argv):
   tf.logging.info("Loading data")
   requests = get_requests()
 
+  if len(requests) < FLAGS.workers * FLAGS.num_requests:
+    tf.logging.warn("Dataset you specified contains data for {} requests, "
+                    "while you need {} requests for each of {} workers. "
+                    "Some requests are going to be reused.".format(
+                        len(requests), FLAGS.num_requests, FLAGS.workers))
+
+    requests = list(islice(cycle(requests),
+                           FLAGS.num_requests * FLAGS.workers))
+
   results = {}
   load_test_func = None
 
@@ -602,8 +642,8 @@ def main(argv):
     if FLAGS.mode == "grpc":
       load_test_func = functools.partial(run_grpc_load_test, address)
     else:
-      load_test_func = functools.partial(
-          run_synchronous_grpc_load_test, address)
+      load_test_func = functools.partial(run_synchronous_grpc_load_test,
+                                         address)
   elif FLAGS.mode == "rest":
     load_test_func = functools.partial(run_rest_load_test, address)
   else:
@@ -617,20 +657,19 @@ def main(argv):
   else:
 
     def _load_test_func(qps, worker_results, worker_index):
-      worker_requests = requests[
-          worker_index
-          * FLAGS.num_requests: (worker_index + 1)
-          * FLAGS.num_requests
-      ]
+      worker_requests = islice(
+          requests,
+          worker_index * FLAGS.num_requests,
+          (worker_index + 1) * FLAGS.num_requests,
+      )
       worker_results[worker_index] = load_test_func(worker_requests, qps)
 
     for qps in get_qps_range(FLAGS.qps_range):
       worker_threads = []
       worker_results = []
       for worker_index in range(FLAGS.workers):
-        thread = threading.Thread(
-            target=_load_test_func, args=(qps, worker_results, worker_index)
-        )
+        thread = threading.Thread(target=_load_test_func,
+                                  args=(qps, worker_results, worker_index))
         worker_threads.append(thread)
         worker_results.append({})
         thread.start()
@@ -642,7 +681,7 @@ def main(argv):
       print_result(result)
       merge_results(results, result)
 
-  if FLAGS.csv_report_filename is not None and FLAGS.csv_report_filename != '':
+  if FLAGS.csv_report_filename is not None and FLAGS.csv_report_filename != "":
     import pandas as pd
 
     df = pd.DataFrame.from_dict(results)
