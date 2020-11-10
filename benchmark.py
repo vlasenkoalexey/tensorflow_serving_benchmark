@@ -18,6 +18,7 @@ import os
 import queue as Queue
 import requests as r
 import threading
+import multiprocessing
 import time
 
 # Disable GPU, so tensorflow initializes faster
@@ -81,6 +82,8 @@ tf.app.flags.DEFINE_string(
     "API Key for ESP service if authenticating external requests.")
 tf.app.flags.DEFINE_string("csv_report_filename", "",
                            "Filename to generate report")
+tf.app.flags.DEFINE_enum("grpc_compression", "none",
+                         ["none", "deflate", "gzip"], "grpc compression")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -157,6 +160,15 @@ class Worker(object):
     return self._end_time - self._start_time
 
 
+def get_grpc_compression():
+  if FLAGS.grpc_compression == 'gzip':
+    return grpc.Compression.Gzip
+  elif FLAGS.grpc_compression == 'deflate':
+    return grpc.Compression.Deflate
+  else:
+    return None
+
+
 def run_grpc_load_test(address, requests, qps):
   """Loadtest the server gRPC endpoint with constant QPS.
     Args:
@@ -167,7 +179,8 @@ def run_grpc_load_test(address, requests, qps):
 
   tf.logging.info("Running gRPC benchmark at {} qps".format(qps))
 
-  grpc_channel = grpc.insecure_channel(address)
+  grpc_channel = grpc.insecure_channel(address,
+                                       compression=get_grpc_compression())
   stub = prediction_service_pb2_grpc.PredictionServiceStub(grpc_channel)
 
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
@@ -262,7 +275,8 @@ def run_synchronous_grpc_load_test(address, requests, qps):
 
   tf.logging.info("Running synchronous gRPC benchmark at {} qps".format(qps))
 
-  grpc_channel = grpc.insecure_channel(address)
+  grpc_channel = grpc.insecure_channel(address,
+                                       compression=get_grpc_compression())
   stub = prediction_service_pb2_grpc.PredictionServiceStub(grpc_channel)
 
   # List appends are thread safe
@@ -665,21 +679,23 @@ def main(argv):
       worker_results[worker_index] = load_test_func(worker_requests, qps)
 
     for qps in get_qps_range(FLAGS.qps_range):
-      worker_threads = []
-      worker_results = []
-      for worker_index in range(FLAGS.workers):
-        thread = threading.Thread(target=_load_test_func,
-                                  args=(qps, worker_results, worker_index))
-        worker_threads.append(thread)
-        worker_results.append({})
-        thread.start()
+      worker_processes = []
+      with multiprocessing.Manager() as manager:
+        worker_results = manager.list()
+        for worker_index in range(FLAGS.workers):
+          worker_process = multiprocessing.Process(target=_load_test_func,
+                                                   args=(qps, worker_results,
+                                                         worker_index))
+          worker_processes.append(worker_process)
+          worker_results.append({})
+          worker_process.start()
 
-      for thread in worker_threads:
-        thread.join()
+        for worker_process in worker_processes:
+          worker_process.join()
 
-      result = merge_worker_results(worker_results)
-      print_result(result)
-      merge_results(results, result)
+        result = merge_worker_results(worker_results)
+        print_result(result)
+        merge_results(results, result)
 
   if FLAGS.csv_report_filename is not None and FLAGS.csv_report_filename != "":
     import pandas as pd
