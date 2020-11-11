@@ -104,7 +104,7 @@ class Worker(object):
       "_metadata",
   )
 
-  def __init__(self, index, request, stub, queue, qps, num_requests, metadata):
+  def __init__(self, index, request, stub, queue, qps, num_requests, error_details, metadata):
     self._id = index
     self._request = request
     self._stub = stub
@@ -114,6 +114,7 @@ class Worker(object):
     self._success = None
     self._start_time = None
     self._end_time = None
+    self._error_details = error_details
     self._metadata = metadata
 
   def start(self):
@@ -123,7 +124,12 @@ class Worker(object):
       exception = resp_future.exception()
       if exception:
         self._success = False
-        tf.logging.error(exception)
+        if hasattr(exception, 'details'):
+          if not exception.details() in self._error_details:
+            self._error_details.add(exception.details())
+            tf.logging.error(exception)
+        else:
+          tf.logging.error(exception)
       else:
         self._success = True
       self._end_time = time.time()
@@ -203,9 +209,10 @@ def run_grpc_load_test(address, requests, qps):
   miss_rate_percent = []
   start_time = time.time()
   previous_worker_start = start_time
+  error_details = set()
   for request in requests:
     interval = intervals[i]
-    worker = Worker(i, request, stub, q, qps, num_requests, metadata)
+    worker = Worker(i, request, stub, q, qps, num_requests, error_details, metadata)
     workers.append(worker)
     worker.start()
     if i % (qps * 10) == 0:
@@ -285,6 +292,7 @@ def run_synchronous_grpc_load_test(address, requests, qps):
   error = []
   latency = []
   metadata = []
+  error_details = set()
   if FLAGS.api_key:
     metadata.append(("x-api-key", FLAGS.api_key))
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
@@ -296,8 +304,13 @@ def run_synchronous_grpc_load_test(address, requests, qps):
       resp = stub.Predict(request, FLAGS.request_timeout, metadata=metadata)
       success.append(1)
     except Exception as e:
-      print(e)
       error.append(1)
+      if hasattr(e, 'details'):
+        if not e.details() in error_details:
+          error_details.add(e.details())
+          print(e)
+      else:
+        print(e)
 
     latency.append(time.time() - start_time)
     if len(latency) % (qps * 10) == 0:
