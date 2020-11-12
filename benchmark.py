@@ -234,8 +234,6 @@ def run_grpc_load_test(address, requests, qps):
     previous_worker_start = time.time()
     i = i + 1
 
-  assert i == num_requests
-
   # block until all workers are done
   q.join()
   acc_time = time.time() - start_time
@@ -350,8 +348,6 @@ def run_synchronous_grpc_load_test(address, requests, qps):
     previous_worker_start = time.time()
     i = i + 1
 
-  assert i == num_requests
-
   for thread in thread_lst:
     thread.join()
 
@@ -443,8 +439,6 @@ def run_rest_load_test(address, requests, qps):
       miss_rate_percent.append(missed_delay)
     previous_worker_start = time.time()
     i = i + 1
-
-  assert i == num_requests
 
   for thread in thread_lst:
     thread.join()
