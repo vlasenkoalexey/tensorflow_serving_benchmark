@@ -32,6 +32,8 @@ benchmark.py:
     (default: '')
   --distribution: <uniform|poisson|pareto>: Distribution
     (default: 'uniform')
+  --grpc_compression: <none|deflate|gzip>: gRPC compression
+    (default: 'none')
   --host: Host name to connect to, localhost by default.
     (default: 'localhost')
   --input_name: The name of the model input tensor.
@@ -42,6 +44,9 @@ benchmark.py:
     (default: '')
   --num_requests: Total # of requests sent.
     (default: '20')
+    (an integer)
+  --num_warmup_requests: Number of warmup requests to send before benchmark.
+    (default: '0')
     (an integer)
   --port: Port to connect to.
     (an integer)
