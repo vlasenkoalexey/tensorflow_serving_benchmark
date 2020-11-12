@@ -33,6 +33,9 @@ from tensorflow_serving.apis import predict_pb2
 from tensorflow_serving.apis import prediction_service_pb2_grpc
 
 tf.app.flags.DEFINE_integer("num_requests", 20, "Total # of requests sent.")
+tf.app.flags.DEFINE_integer(
+    "num_warmup_requests", 0,
+    "Number requests to send before starting benchmark.")
 tf.app.flags.DEFINE_string(
     "qps_range",
     "",
@@ -104,7 +107,8 @@ class Worker(object):
       "_metadata",
   )
 
-  def __init__(self, index, request, stub, queue, qps, num_requests, error_details, metadata):
+  def __init__(self, index, request, stub, queue, qps, num_requests,
+               error_details, metadata):
     self._id = index
     self._request = request
     self._stub = stub
@@ -212,7 +216,8 @@ def run_grpc_load_test(address, requests, qps):
   error_details = set()
   for request in requests:
     interval = intervals[i]
-    worker = Worker(i, request, stub, q, qps, num_requests, error_details, metadata)
+    worker = Worker(i, request, stub, q, qps, num_requests, error_details,
+                    metadata)
     workers.append(worker)
     worker.start()
     if i % (qps * 10) == 0:
@@ -675,6 +680,12 @@ def main(argv):
     load_test_func = functools.partial(run_rest_load_test, address)
   else:
     raise ValueError("Invalid --mode:" + FLAGS.mode)
+
+  if FLAGS.num_warmup_requests > 0:
+    tf.logging.info("Sending {} warmup requests".format(
+        FLAGS.num_warmup_requests))
+    warmup_requests = list(islice(cycle(requests), FLAGS.num_warmup_requests))
+    _ = load_test_func(warmup_requests, get_qps_range(FLAGS.qps_range)[0])
 
   if FLAGS.workers == 1:
     for qps in get_qps_range(FLAGS.qps_range):
