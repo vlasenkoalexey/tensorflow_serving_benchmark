@@ -179,11 +179,12 @@ def get_grpc_compression():
     return None
 
 
-def run_grpc_load_test(address, requests, qps):
+def run_grpc_load_test(address, requests, num_requests, qps):
   """Loadtest the server gRPC endpoint with constant QPS.
     Args:
       address: The model server address to which send inference requests.
       requests: Iterable of PredictRequest proto.
+      num_requests: Number of requests.
       qps: The number of requests being sent per second.
     """
 
@@ -200,8 +201,6 @@ def run_grpc_load_test(address, requests, qps):
 
   q = Queue.Queue()
   intervals = []
-
-  num_requests = FLAGS.num_requests
 
   for i in range(num_requests):
     q.put(i)
@@ -220,6 +219,7 @@ def run_grpc_load_test(address, requests, qps):
                     metadata)
     workers.append(worker)
     worker.start()
+
     if i % (qps * 10) == 0:
       tf.logging.debug("sent {} requests.".format(i))
     # send requests at a constant rate and adjust for the time it took to send previous request
@@ -272,7 +272,7 @@ def run_grpc_load_test(address, requests, qps):
   }
 
 
-def run_synchronous_grpc_load_test(address, requests, qps):
+def run_synchronous_grpc_load_test(address, requests, num_requests, qps):
   """Loadtest the server gRPC endpoint with constant QPS.
 
     This API is sending gRPC requests in synchronous mode,
@@ -280,6 +280,7 @@ def run_synchronous_grpc_load_test(address, requests, qps):
     Args:
       address: The model server address to which send inference requests.
       requests: Iterable of PredictRequest proto.
+      num_requests: Number of requests.      
       qps: The number of requests being sent per second.
     """
 
@@ -290,7 +291,6 @@ def run_synchronous_grpc_load_test(address, requests, qps):
   stub = prediction_service_pb2_grpc.PredictionServiceStub(grpc_channel)
 
   # List appends are thread safe
-  num_requests = FLAGS.num_requests
   success = []
   error = []
   latency = []
@@ -311,9 +311,9 @@ def run_synchronous_grpc_load_test(address, requests, qps):
       if hasattr(e, 'details'):
         if not e.details() in error_details:
           error_details.add(e.details())
-          print(e)
+          tf.logging.error(e)
       else:
-        print(e)
+        tf.logging.error(e)
 
     latency.append(time.time() - start_time)
     if len(latency) % (qps * 10) == 0:
@@ -377,12 +377,13 @@ def run_synchronous_grpc_load_test(address, requests, qps):
   }
 
 
-def run_rest_load_test(address, requests, qps):
+def run_rest_load_test(address, requests, num_requests, qps):
   """Loadtest the server REST endpoint with constant QPS.
 
     Args:
       address: The model server address to which send inference requests.
       requests: Iterable of POST request bodies.
+      num_requests: Number of requests.
       qps: The number of requests being sent per second.
     """
 
@@ -392,7 +393,6 @@ def run_rest_load_test(address, requests, qps):
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
 
   # List appends are thread safe
-  num_requests = FLAGS.num_requests
   success = []
   error = []
   latency = []
@@ -650,16 +650,21 @@ def main(argv):
   tf.logging.info("ModelServer at: {}".format(address))
 
   tf.logging.info("Loading data")
-  requests = get_requests()
+  requests_list = get_requests()
+  
+  # requests is an iterator, keeping it separate because it is only possible
+  # to iterate over it once, and to make sure that we won't have to 
+  # allocate memory for duplicated requests
+  requests = requests_list 
 
-  if len(requests) < FLAGS.workers * FLAGS.num_requests:
+  if len(requests_list) < FLAGS.workers * FLAGS.num_requests:
     tf.logging.warn("Dataset you specified contains data for {} requests, "
                     "while you need {} requests for each of {} workers. "
                     "Some requests are going to be reused.".format(
                         len(requests), FLAGS.num_requests, FLAGS.workers))
 
-    requests = list(islice(cycle(requests),
-                           FLAGS.num_requests * FLAGS.workers))
+    requests = islice(cycle(requests),
+                           FLAGS.num_requests * FLAGS.workers)
 
   results = {}
   load_test_func = None
@@ -678,30 +683,30 @@ def main(argv):
   if FLAGS.num_warmup_requests > 0:
     tf.logging.info("Sending {} warmup requests".format(
         FLAGS.num_warmup_requests))
-    warmup_requests = list(islice(cycle(requests), FLAGS.num_warmup_requests))
-    _ = load_test_func(warmup_requests, get_qps_range(FLAGS.qps_range)[0])
+    warmup_requests = islice(cycle(requests_list), FLAGS.num_warmup_requests)
+    _ = load_test_func(warmup_requests, FLAGS.num_warmup_requests, get_qps_range(FLAGS.qps_range)[0])
 
   if FLAGS.workers == 1:
     for qps in get_qps_range(FLAGS.qps_range):
-      result = load_test_func(requests, qps)
+      result = load_test_func(requests, FLAGS.num_requests, qps)
       print_result(result)
       merge_results(results, result)
   else:
 
-    def _load_test_func(qps, worker_results, worker_index):
+    def _worker_load_test_func(qps, worker_results, worker_index):
       worker_requests = islice(
           requests,
           worker_index * FLAGS.num_requests,
           (worker_index + 1) * FLAGS.num_requests,
       )
-      worker_results[worker_index] = load_test_func(worker_requests, qps)
+      worker_results[worker_index] = load_test_func(worker_requests, FLAGS.num_requests, qps)
 
     for qps in get_qps_range(FLAGS.qps_range):
       worker_processes = []
       with multiprocessing.Manager() as manager:
         worker_results = manager.list()
         for worker_index in range(FLAGS.workers):
-          worker_process = multiprocessing.Process(target=_load_test_func,
+          worker_process = multiprocessing.Process(target=_worker_load_test_func,
                                                    args=(qps, worker_results,
                                                          worker_index))
           worker_processes.append(worker_process)
