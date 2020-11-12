@@ -15,6 +15,7 @@ import io
 import json
 import numpy as np
 import os
+import pandas as pd
 import queue as Queue
 import requests as r
 import threading
@@ -720,22 +721,33 @@ def main(argv):
         print_result(result)
         merge_results(results, result)
 
-  if FLAGS.csv_report_filename is not None and FLAGS.csv_report_filename != "":
-    import pandas as pd
+  df = pd.DataFrame.from_dict(results)
+  tf.logging.info("\n" + df.to_string(columns=['reqested_qps', 'actual_qps', 'success', 'error', 'avg_latency', 'p99', 'avg_miss_rate_percent'], index=False))
 
-    df = pd.DataFrame.from_dict(results)
-    tf.logging.info("\n" + df.to_string())
+  if FLAGS.csv_report_filename is not None and FLAGS.csv_report_filename != "":
     df.to_csv(FLAGS.csv_report_filename)
 
     import matplotlib.pyplot as plt
 
+    base_image_file_name = FLAGS.csv_report_filename.replace(".csv", "").replace(".", "_")
+
     plt.figure(figsize=(12, 8))
+    plt.title("Requested QPS")
     plt.plot("reqested_qps", "p50", data=results, label="p50")
     plt.plot("reqested_qps", "p90", data=results, label="p90")
     plt.plot("reqested_qps", "p99", data=results, label="p99")
     plt.plot("reqested_qps", "avg_latency", data=results, label="avg_latency")
     plt.legend()
-    plt.savefig(FLAGS.csv_report_filename + ".png")
+    plt.savefig(base_image_file_name + "_reqested_qps.png")
+
+    plt.figure(figsize=(12, 8))
+    plt.title("Actual QPS")
+    plt.plot("actual_qps", "p50", data=results, label="p50")
+    plt.plot("actual_qps", "p90", data=results, label="p90")
+    plt.plot("actual_qps", "p99", data=results, label="p99")
+    plt.plot("actual_qps", "avg_latency", data=results, label="avg_latency")
+    plt.legend()
+    plt.savefig(base_image_file_name + "_actual_qps.png")
 
 
 if __name__ == "__main__":
