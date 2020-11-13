@@ -28,14 +28,16 @@ benchmark.py:
   --batch_size: Per request batch size.
     (default: '8')
     (an integer)
-  --csv_report_filename: Filename to generate report
+  --csv_report_filename: Filename to generate report.
     (default: '')
-  --distribution: <uniform|poisson|pareto>: Distribution
+  --distribution: <uniform|poisson|pareto>: Load distribution type.
     (default: 'uniform')
   --grpc_compression: <none|deflate|gzip>: gRPC compression
     (default: 'none')
   --host: Host name to connect to, localhost by default.
     (default: 'localhost')
+  --jsonl_file_path: The path the dataset file in jsonl format.
+    (default: '')
   --input_name: The name of the model input tensor.
     (default: 'input')
   --mode: <grpc|sync_grpc|rest>: Benchmark mode: gRPC, synchronous gRPC, or REST
