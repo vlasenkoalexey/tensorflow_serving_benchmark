@@ -526,6 +526,12 @@ def generate_grpc_request_from_dictionary(row_dict):
     request.inputs[key].CopyFrom(proto)
   return request
 
+def generate_rest_request_from_dictionary(row_dict):
+  payload = json.dumps({
+      "signature_name": FLAGS.signature_name,
+      "inputs": row_dict
+  })
+  return payload
 
 def get_requests():
   if FLAGS.tfrecord_dataset_path != "":
@@ -555,10 +561,18 @@ def get_requests():
       raise ValueError("Invalid --mode:" + FLAGS.mode)
   elif FLAGS.jsonl_file_path != "":
     rows = []
+    _generate_request_from_dictionary = None
+    if FLAGS.mode == "grpc" or FLAGS.mode == "sync_grpc":
+      _generate_request_from_dictionary = generate_grpc_request_from_dictionary
+    elif FLAGS.mode == "rest":
+      _generate_request_from_dictionary = generate_rest_request_from_dictionary
+    else:
+      raise ValueError("Invalid --mode:" + FLAGS.mode)
+
     with open(FLAGS.jsonl_file_path, "r") as f:
       for line in f:
         row_dict = eval(line)
-        rows.append(generate_grpc_request_from_dictionary(row_dict))
+        rows.append(_generate_request_from_dictionary(row_dict))
     return rows
 
   else:
