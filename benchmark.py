@@ -667,18 +667,11 @@ def main(argv):
   tf.logging.info("Loading data")
   requests_list = get_requests()
 
-  # requests is an iterator, keeping it separate because it is only possible
-  # to iterate over it once, and to make sure that we won't have to
-  # allocate memory for duplicated requests
-  requests = requests_list
-
   if len(requests_list) < FLAGS.workers * FLAGS.num_requests:
     tf.logging.warn("Dataset you specified contains data for {} requests, "
                     "while you need {} requests for each of {} workers. "
                     "Some requests are going to be reused.".format(
                         len(requests_list), FLAGS.num_requests, FLAGS.workers))
-
-    requests = cycle(requests_list)
 
   results = {}
   load_test_func = None
@@ -702,7 +695,7 @@ def main(argv):
 
   if FLAGS.workers == 1:
     for qps in get_qps_range(FLAGS.qps_range):
-      worker_requests = islice(requests, FLAGS.num_requests)
+      worker_requests = islice(cycle(requests_list), FLAGS.num_requests)
       result = load_test_func(worker_requests, FLAGS.num_requests, qps)
       print_result(result)
       merge_results(results, result)
@@ -710,7 +703,7 @@ def main(argv):
 
     def _worker_load_test_func(qps, worker_results, worker_index):
       worker_requests = islice(
-          requests,
+          cycle(requests_list),
           worker_index * FLAGS.num_requests,
           (worker_index + 1) * FLAGS.num_requests,
       )
