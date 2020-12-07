@@ -281,7 +281,7 @@ def run_synchronous_grpc_load_test(address, requests, num_requests, qps):
     Args:
       address: The model server address to which send inference requests.
       requests: Iterable of PredictRequest proto.
-      num_requests: Number of requests.      
+      num_requests: Number of requests.
       qps: The number of requests being sent per second.
     """
 
@@ -666,20 +666,19 @@ def main(argv):
 
   tf.logging.info("Loading data")
   requests_list = get_requests()
-  
+
   # requests is an iterator, keeping it separate because it is only possible
-  # to iterate over it once, and to make sure that we won't have to 
+  # to iterate over it once, and to make sure that we won't have to
   # allocate memory for duplicated requests
-  requests = requests_list 
+  requests = requests_list
 
   if len(requests_list) < FLAGS.workers * FLAGS.num_requests:
     tf.logging.warn("Dataset you specified contains data for {} requests, "
                     "while you need {} requests for each of {} workers. "
                     "Some requests are going to be reused.".format(
-                        len(requests), FLAGS.num_requests, FLAGS.workers))
+                        len(requests_list), FLAGS.num_requests, FLAGS.workers))
 
-    requests = islice(cycle(requests),
-                           FLAGS.num_requests * FLAGS.workers)
+    requests = cycle(requests_list)
 
   results = {}
   load_test_func = None
@@ -703,7 +702,8 @@ def main(argv):
 
   if FLAGS.workers == 1:
     for qps in get_qps_range(FLAGS.qps_range):
-      result = load_test_func(requests, FLAGS.num_requests, qps)
+      worker_requests = islice(requests, FLAGS.num_requests)
+      result = load_test_func(worker_requests, FLAGS.num_requests, qps)
       print_result(result)
       merge_results(results, result)
   else:
