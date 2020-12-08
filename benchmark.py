@@ -692,6 +692,7 @@ def main(argv):
         FLAGS.num_warmup_requests))
     warmup_requests = islice(cycle(requests_list), FLAGS.num_warmup_requests)
     _ = load_test_func(warmup_requests, FLAGS.num_warmup_requests, get_qps_range(FLAGS.qps_range)[0])
+    tf.logging.info("Warmup complete")
 
   if FLAGS.workers == 1:
     for qps in get_qps_range(FLAGS.qps_range):
