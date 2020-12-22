@@ -27,11 +27,11 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import tensorflow.compat.v1 as tf
 
 from google.protobuf.json_format import Parse as ProtoParseJson
-from tensorflow.core.framework import types_pb2
 from tensorflow.python.platform import gfile
 from itertools import cycle, islice
-from tensorflow_serving.apis import predict_pb2
-from tensorflow_serving.apis import prediction_service_pb2_grpc
+from protos.tensorflow.core.framework import types_pb2
+from protos.tensorflow_serving.apis import predict_pb2
+from protos.tensorflow_serving.apis import prediction_service_pb2_grpc
 
 tf.app.flags.DEFINE_integer("num_requests", 20, "Total # of requests sent.")
 tf.app.flags.DEFINE_integer(
