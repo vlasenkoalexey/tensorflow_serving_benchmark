@@ -423,6 +423,8 @@ def run_rest_load_test(address, requests, num_requests, qps):
   i = 0
   for request in requests:
     interval = intervals[i]
+    print(">>>>>>>")
+    print(request)
     thread = threading.Thread(target=_make_rest_call, args=(i, request))
     thread_lst.append(thread)
     thread.start()
@@ -547,6 +549,8 @@ def get_requests():
     if FLAGS.mode == "grpc" or FLAGS.mode == "sync_grpc":
       with open(FLAGS.requests_file_path, "r") as f:
         j = json.load(f)
+        if j is not list:
+          j = [j]
         rows = [
             ProtoParseJson(json.dumps(row), predict_pb2.PredictRequest())
             for row in j
@@ -555,6 +559,8 @@ def get_requests():
     elif FLAGS.mode == "rest":
       with open(FLAGS.requests_file_path, "r") as f:
         j = json.load(f)
+        if j is not list:
+          j = [j]
         rows = [row for row in j]
         return rows
     else:
