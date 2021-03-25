@@ -423,8 +423,6 @@ def run_rest_load_test(address, requests, num_requests, qps):
   i = 0
   for request in requests:
     interval = intervals[i]
-    print(">>>>>>>")
-    print(request)
     thread = threading.Thread(target=_make_rest_call, args=(i, request))
     thread_lst.append(thread)
     thread.start()
@@ -514,6 +512,88 @@ def generate_grpc_request(tfrecord_row):
       tf.make_tensor_proto(tfrecord_row, dtype=tf.string))
   return request
 
+from tensorflow.core.framework import tensor_pb2
+from tensorflow.core.framework import tensor_shape_pb2
+from tensorflow.core.framework import types_pb2
+
+
+def get_dimensions(list_of_lists):
+    """Returns the inferred dense dimensions of a list of lists."""
+    if not isinstance(list_of_lists, (list, tuple)):
+        return []
+    elif not list_of_lists:
+        return [0]
+    else:
+        return [len(list_of_lists)] + get_dimensions(list_of_lists[0])
+
+def make_tensor_proto(values, dtype=None):
+    nparray = np.array(values)
+    dims = get_dimensions(values)
+    tensor_proto = tensor_pb2.TensorProto(
+        tensor_shape=tensor_shape_pb2.TensorShapeProto(
+                dim=[
+                    tensor_shape_pb2.TensorShapeProto.Dim(
+                        size=d
+                    )
+                    for d in dims
+                ],
+        )
+    )
+    if not dtype:
+        if len(dims) > 1:
+            numpy_dtype = np.concatenate(nparray).ravel().dtype
+        else:
+            numpy_dtype = nparray.dtype
+        if numpy_dtype == np.dtype(np.int64) or numpy_dtype == np.dtype(np.int32):
+            dtype = types_pb2.DT_INT64
+        elif numpy_dtype == np.dtype(np.float64) or numpy_dtype == np.dtype(np.float32):
+            dtype = types_pb2.DT_FLOAT
+        elif numpy_dtype == 'S':
+            dtype = types_pb2.DT_STRING
+        else:
+            raise "Don't know how to convert:" + str(nparray.dtype)
+
+    tensor_proto.dtype = dtype
+
+    if dtype == types_pb2.DT_INT64:
+        if len(dims) > 1:
+            tensor_proto.int64_val.extend([item for sublist in values for item in sublist])
+        else:
+            tensor_proto.int64_val.extend(values)
+    elif dtype == types_pb2.DT_FLOAT:
+        if len(dims) > 1:
+            tensor_proto.float_val.extend([item for sublist in values for item in sublist])
+        else:
+            tensor_proto.float_val.extend(values)
+    else:
+        raise "Don't know how to convert:" + str(nparray.dtype)
+    return tensor_proto
+
+# def generate_grpc_request_from_dictionary(row_dict):
+#   """Generate gRPC inference request with payload."""
+
+#   request = predict_pb2.PredictRequest()
+#   request.model_spec.name = FLAGS.model_name
+#   request.model_spec.signature_name = FLAGS.signature_name
+#   for key, value in row_dict.items():
+#     proto = make_tensor_proto(value)
+#     if proto.dtype == types_pb2.DT_FLOAT:
+#       proto.tensor_content = b""
+#       if len(proto.tensor_shape.dim) == 1:
+#         proto.float_val.extend(value)
+#       elif len(proto.tensor_shape.dim) > 1:
+#         proto.float_val.extend([item for sublist in value for item in sublist])
+
+#     if proto.dtype == types_pb2.DT_INT32 or "values" in key or proto.dtype == types_pb2.DT_INT64:
+#       proto = make_tensor_proto(value, types_pb2.DT_INT64)
+#       proto.tensor_content = b""
+#       if len(proto.tensor_shape.dim) == 1:
+#         proto.int64_val.extend(value)
+#       elif len(proto.tensor_shape.dim) > 1:
+#         proto.int64_val.extend([item for sublist in value for item in sublist])
+#     #proto.tensor_content = b""
+#     request.inputs[key].CopyFrom(proto)
+#   return request
 
 def generate_grpc_request_from_dictionary(row_dict):
   """Generate gRPC inference request with payload."""
