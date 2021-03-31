@@ -25,6 +25,9 @@ python3 benchmark.py --port=8500 --mode='grpc' --tfrecord_dataset_path=...
 benchmark.py:
   --api_key: API Key for ESP service if authenticating external requests.
     (default: '')
+  --authorization_header: Authorization header to send with REST requests.
+    For Cloud AI it can be set as "Bearer `gcloud auth print-access-token`"
+    (default: '')
   --batch_size: Per request batch size.
     (default: '8')
     (an integer)
@@ -34,6 +37,9 @@ benchmark.py:
     (default: 'uniform')
   --grpc_compression: <none|deflate|gzip>: gRPC compression
     (default: 'none')
+  --grpc_destination: gRPC destination metadata header.
+    When using VPC peering on Cloud AI it should be set as <model-name>-<version-name>
+    (default: '')
   --host: Host name to connect to, localhost by default.
     (default: 'localhost')
   --jsonl_file_path: The path the dataset file in jsonl format.
