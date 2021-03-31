@@ -8,6 +8,8 @@ from __future__ import print_function
 
 import base64
 import csv
+
+from requests.sessions import default_headers
 import distribution
 import functools
 import grpc
@@ -88,6 +90,10 @@ tf.app.flags.DEFINE_string("csv_report_filename", "",
                            "Filename to generate report")
 tf.app.flags.DEFINE_enum("grpc_compression", "none",
                          ["none", "deflate", "gzip"], "grpc compression")
+tf.app.flags.DEFINE_string("authorization_header", "",
+                         "Authorization header for REST requests.")
+tf.app.flags.DEFINE_string("grpc_destination", "",
+                         "gRPC destination metadata header.")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -180,10 +186,11 @@ def get_grpc_compression():
     return None
 
 
-def run_grpc_load_test(address, requests, num_requests, qps):
+def run_grpc_load_test(address, metadata, requests, num_requests, qps):
   """Loadtest the server gRPC endpoint with constant QPS.
     Args:
       address: The model server address to which send inference requests.
+      metadata: gRPC metadata to send alone with each request.
       requests: Iterable of PredictRequest proto.
       num_requests: Number of requests.
       qps: The number of requests being sent per second.
@@ -196,9 +203,6 @@ def run_grpc_load_test(address, requests, num_requests, qps):
   stub = prediction_service_pb2_grpc.PredictionServiceStub(grpc_channel)
 
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
-  metadata = []
-  if FLAGS.api_key:
-    metadata.append(("x-api-key", FLAGS.api_key))
 
   q = Queue.Queue()
   intervals = []
@@ -280,6 +284,7 @@ def run_synchronous_grpc_load_test(address, requests, num_requests, qps):
     one request per Thread.
     Args:
       address: The model server address to which send inference requests.
+      metadata: gRPC metadata to send alone with each request.
       requests: Iterable of PredictRequest proto.
       num_requests: Number of requests.
       qps: The number of requests being sent per second.
@@ -295,10 +300,7 @@ def run_synchronous_grpc_load_test(address, requests, num_requests, qps):
   success = []
   error = []
   latency = []
-  metadata = []
   error_details = set()
-  if FLAGS.api_key:
-    metadata.append(("x-api-key", FLAGS.api_key))
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
 
   def _make_grpc_call(i, request):
@@ -378,11 +380,12 @@ def run_synchronous_grpc_load_test(address, requests, num_requests, qps):
   }
 
 
-def run_rest_load_test(address, requests, num_requests, qps):
+def run_rest_load_test(address, headers, requests, num_requests, qps):
   """Loadtest the server REST endpoint with constant QPS.
 
     Args:
       address: The model server address to which send inference requests.
+      headers: Headers to send along with request.
       requests: Iterable of POST request bodies.
       num_requests: Number of requests.
       qps: The number of requests being sent per second.
@@ -390,7 +393,10 @@ def run_rest_load_test(address, requests, num_requests, qps):
 
   tf.logging.info("Running REST benchmark at {} qps".format(qps))
 
-  address = "http://{}/v1/models/{}:predict".format(address, FLAGS.model_name)
+  if address.endswith(":predict"):
+    uri = address
+  else:
+    uri = "http://{}/v1/models/{}:predict".format(address, FLAGS.model_name)
   dist = distribution.Distribution.factory(FLAGS.distribution, qps)
 
   # List appends are thread safe
@@ -401,7 +407,7 @@ def run_rest_load_test(address, requests, num_requests, qps):
   def _make_rest_call(i, request):
     """Send REST POST request to Tensorflow Serving endpoint."""
     start_time = time.time()
-    resp = r.post(address, data=request)
+    resp = r.post(uri, data=request, headers=headers)
     latency.append(time.time() - start_time)
     if len(latency) % (10 * qps) == 0:
       tf.logging.debug("received {} responses.".format(len(latency)))
@@ -423,8 +429,6 @@ def run_rest_load_test(address, requests, num_requests, qps):
   i = 0
   for request in requests:
     interval = intervals[i]
-    print(">>>>>>>")
-    print(request)
     thread = threading.Thread(target=_make_rest_call, args=(i, request))
     thread_lst.append(thread)
     thread.start()
@@ -681,15 +685,25 @@ def main(argv):
 
   results = {}
   load_test_func = None
+  headers = {}
+  if FLAGS.authorization_header:
+    headers["authorization"] = FLAGS.authorization_header
+
+  metadata = []
+  if FLAGS.api_key:
+    metadata.append(("x-api-key", FLAGS.api_key))
+  if FLAGS.grpc_destination:
+    metadata.append(("grpc-destination", FLAGS.grpc_destination))
 
   if FLAGS.mode == "grpc" or FLAGS.mode == "sync_grpc":
     if FLAGS.mode == "grpc":
-      load_test_func = functools.partial(run_grpc_load_test, address)
+      load_test_func = functools.partial(run_grpc_load_test,
+                                         address, metadata)
     else:
       load_test_func = functools.partial(run_synchronous_grpc_load_test,
-                                         address)
+                                         address, metadata)
   elif FLAGS.mode == "rest":
-    load_test_func = functools.partial(run_rest_load_test, address)
+    load_test_func = functools.partial(run_rest_load_test, address, headers)
   else:
     raise ValueError("Invalid --mode:" + FLAGS.mode)
 
