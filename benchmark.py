@@ -671,7 +671,10 @@ def main(argv):
     tf.logging.error("Please specify qps_range")
     exit(1)
 
-  address = "{}:{}".format(FLAGS.host, FLAGS.port)
+  if FLAGS.host.endswith(":predict"):
+    address = FLAGS.host
+  else:
+    address = "{}:{}".format(FLAGS.host, FLAGS.port)
   tf.logging.info("ModelServer at: {}".format(address))
 
   tf.logging.info("Loading data")
