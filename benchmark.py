@@ -565,7 +565,7 @@ def get_requests():
         j = json.load(f)
         if j is not list:
           j = [j]
-        rows = [row for row in j]
+        rows = [json.dumps(row) for row in j]
         return rows
     else:
       raise ValueError("Invalid --mode:" + FLAGS.mode)
