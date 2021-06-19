@@ -16,6 +16,7 @@ import grpc
 import io
 import json
 import numpy as np
+import numbers
 import os
 import pandas as pd
 import queue as Queue
@@ -94,6 +95,8 @@ tf.app.flags.DEFINE_string("authorization_header", "",
                          "Authorization header for REST requests.")
 tf.app.flags.DEFINE_string("grpc_destination", "",
                          "gRPC destination metadata header.")
+tf.app.flags.DEFINE_string("default_numeric_type", "",
+                         "Default type to use for numeric values.")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -522,13 +525,26 @@ def generate_grpc_request(tfrecord_row):
 def generate_grpc_request_from_dictionary(row_dict):
   """Generate gRPC inference request with payload."""
 
+  def isNumeric(value):
+    while isinstance(value, list):
+      if len(value) > 0:
+        value = value[0]
+      else:
+        return False
+    return isinstance(value, numbers.Number)
+
   request = predict_pb2.PredictRequest()
   request.model_spec.name = FLAGS.model_name
   request.model_spec.signature_name = FLAGS.signature_name
   for key, value in row_dict.items():
-    proto = tf.make_tensor_proto(value)
-    if proto.dtype == types_pb2.DT_INT32 or "values" in key:
-      proto = tf.make_tensor_proto(value, types_pb2.DT_INT64)
+    proto = None
+    if FLAGS.default_numeric_type and isNumeric(value):
+      proto = tf.make_tensor_proto(value, dtype=FLAGS.default_numeric_type)
+    else:
+      proto = tf.make_tensor_proto(value)
+      # For embedding lookups, might need to reconsider this logic
+      if proto.dtype == types_pb2.DT_INT32 and "values" in key:
+        proto = tf.make_tensor_proto(value, types_pb2.DT_INT64)
     request.inputs[key].CopyFrom(proto)
   return request
 
