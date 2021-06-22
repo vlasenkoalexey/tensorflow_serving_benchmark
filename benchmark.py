@@ -95,8 +95,10 @@ tf.app.flags.DEFINE_string("authorization_header", "",
                          "Authorization header for REST requests.")
 tf.app.flags.DEFINE_string("grpc_destination", "",
                          "gRPC destination metadata header.")
-tf.app.flags.DEFINE_string("default_numeric_type", "",
-                         "Default type to use for numeric values.")
+tf.app.flags.DEFINE_string("default_int_type", "",
+                         "Default type to use for integer values.")
+tf.app.flags.DEFINE_string("default_float_type", "",
+                         "Default type to use for fractional values.")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -525,26 +527,25 @@ def generate_grpc_request(tfrecord_row):
 def generate_grpc_request_from_dictionary(row_dict):
   """Generate gRPC inference request with payload."""
 
-  def isNumeric(value):
+  def isSubType(value, t):
     while isinstance(value, list):
       if len(value) > 0:
         value = value[0]
       else:
         return False
-    return isinstance(value, numbers.Number)
+    return isinstance(value, t)
 
   request = predict_pb2.PredictRequest()
   request.model_spec.name = FLAGS.model_name
   request.model_spec.signature_name = FLAGS.signature_name
   for key, value in row_dict.items():
     proto = None
-    if FLAGS.default_numeric_type and isNumeric(value):
-      proto = tf.make_tensor_proto(value, dtype=FLAGS.default_numeric_type)
+    if FLAGS.default_int_type and (isSubType(value, int) or "/values" in key or "/indices" in key):
+      proto = tf.make_tensor_proto(value, dtype=FLAGS.default_int_type)
+    elif FLAGS.default_float_type and isSubType(value, float):
+      proto = tf.make_tensor_proto(value, dtype=FLAGS.default_float_type)
     else:
       proto = tf.make_tensor_proto(value)
-      # For embedding lookups, might need to reconsider this logic
-      if proto.dtype == types_pb2.DT_INT32 and "values" in key:
-        proto = tf.make_tensor_proto(value, types_pb2.DT_INT64)
     request.inputs[key].CopyFrom(proto)
   return request
 
