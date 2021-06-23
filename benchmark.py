@@ -568,7 +568,7 @@ def get_requests():
       raise ValueError("Invalid --mode:" + FLAGS.mode)
   elif FLAGS.requests_file_path != "":
     if FLAGS.mode == "grpc" or FLAGS.mode == "sync_grpc":
-      with open(FLAGS.requests_file_path, "r") as f:
+      with tf.gfile.GFile(FLAGS.requests_file_path, "r") as f:
         j = json.load(f)
         if j is not list:
           j = [j]
@@ -578,7 +578,7 @@ def get_requests():
         ]
         return rows
     elif FLAGS.mode == "rest":
-      with open(FLAGS.requests_file_path, "r") as f:
+      with tf.gfile.GFile(FLAGS.requests_file_path, "r") as f:
         j = json.load(f)
         if j is not list:
           j = [j]
@@ -596,7 +596,7 @@ def get_requests():
     else:
       raise ValueError("Invalid --mode:" + FLAGS.mode)
 
-    with open(FLAGS.jsonl_file_path, "r") as f:
+    with tf.gfile.GFile(FLAGS.jsonl_file_path, "r") as f:
       for line in f:
         row_dict = eval(line)
         rows.append(_generate_request_from_dictionary(row_dict))
