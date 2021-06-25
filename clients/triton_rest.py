@@ -1,3 +1,11 @@
+"""Client for Triton Inference Server using REST API.
+
+References:
+- https://github.com/kubeflow/kfserving/blob/master/docs/predict-api/v2/required_api.md
+- https://github.com/triton-inference-server/client/tree/master/src/python/examples
+- https://github.com/triton-inference-server/client/blob/master/src/python/library/tritonclient/http/__init__.py
+"""
+
 import json
 import time
 import threading
@@ -12,9 +20,8 @@ from tensorflow.python.framework import dtypes
 
 
 class TritonRest(clients.base_client.BaseClient):
-
+  
   def generate_rest_request_from_dictionary(self, row_dict):
-
     def isSubType(value, t):
       while isinstance(value, list):
         if len(value) > 0:
@@ -25,28 +32,24 @@ class TritonRest(clients.base_client.BaseClient):
 
     def getType(value):
       if isSubType(value, float):
-        return dtypes.as_dtype(
-            self._default_float_type
-        ).as_numpy_dtype if self._default_float_type else numpy.float32
+        return dtypes.as_dtype(self._default_float_type).as_numpy_dtype if self._default_float_type else numpy.float32
       elif isSubType(value, int):
-        return dtypes.as_dtype(
-            self._default_int_type
-        ).as_numpy_dtype if self._default_int_type else numpy.int32
+        return dtypes.as_dtype(self._default_int_type).as_numpy_dtype if self._default_int_type else numpy.int32
       elif isSubType(value, str):
         return np.object_
       elif isSubType(value, bool):
         return np.bool
       else:
         raise ValueError("Can't detect type for:" + str(value))
-
+        
     def map_multi_dimensional_list(l, transform):
-      if type(l) == list and len(l) > 0:
-        if type(l[0]) != list:
-          return [transform(v) for v in l]
+        if type(l) == list and len(l) > 0:
+            if type(l[0]) != list:
+                return [transform(v) for v in l]
+            else:
+                return [map_multi_dimensional_list(v, transform) for v in l]
         else:
-          return [map_multi_dimensional_list(v, transform) for v in l]
-      else:
-        return []
+            return []
 
     triton_request_inputs = []
     for key, value in row_dict.items():
@@ -55,22 +58,29 @@ class TritonRest(clients.base_client.BaseClient):
         value = map_multi_dimensional_list(value, lambda s: s.encode("utf-8"))
       numpy_value = np.array(value, dtype=t)
       triton_request_input = httpclient.InferInput(
-          key, list(numpy_value.shape), triton_utils.np_to_triton_dtype(t))
-      triton_request_input.set_data_from_numpy(
-          numpy_value, binary_data=True)  # binary_data=True by default
+        key, 
+        list(numpy_value.shape), 
+        triton_utils.np_to_triton_dtype(t))
+      triton_request_input.set_data_from_numpy(numpy_value, binary_data=True) # binary_data=True by default
       triton_request_inputs.append(triton_request_input)
     # https://github.com/triton-inference-server/client/blob/530bcac5f1574aa2222930076200544eb274245c/src/python/library/tritonclient/http/__init__.py#L81
     # Returns tuple - request and request len to pass in Infer-Header-Content-Length header
-    return httpclient._get_inference_request(
-        inputs=triton_request_inputs,
-        request_id="",
-        outputs=None,
-        sequence_id=0,
-        sequence_start=0,
-        sequence_end=0,
-        priority=0,
-        timeout=None)
-
+    (request, json_size) = httpclient._get_inference_request(
+      inputs=triton_request_inputs, 
+      request_id="", 
+      outputs=None,
+      sequence_id=0,
+      sequence_start=0,
+      sequence_end=0,
+      priority=0, 
+      timeout=None)
+    
+    headers = {}
+    if json_size:
+      headers["Inference-Header-Content-Length"] = str(json_size)
+    return (request, headers)
+    
+    
   def get_requests_from_dictionary(self, path):
     rows = []
     with tf.gfile.GFile(path, "r") as f:
@@ -78,12 +88,22 @@ class TritonRest(clients.base_client.BaseClient):
         row_dict = eval(line)
         rows.append(self.generate_rest_request_from_dictionary(row_dict))
     return rows
-
+  
   def get_requests_from_tfrecord(self, path, count, batch_size):
     raise NotImplementedError()
 
   def get_requests_from_file(self, path):
     raise NotImplementedError()
+    
+  def get_uri(self):
+    if self._host.startswith("http"):
+      return self._host
+    else:
+      # https://github.com/kubeflow/kfserving/blob/master/docs/predict-api/v2/required_api.md#httprest
+      if self._model_version:
+        return f"http://{self._host}:{self._port}/v2/models/{self._model_name}/versions/{self._model_version}/infer"
+      else:
+        return f"http://{self._host}:{self._port}/v2/models/{self._model_name}/infer"    
 
   def run(self, requests, num_requests, qps):
     """Loadtest the server REST endpoint with constant QPS.
@@ -93,13 +113,10 @@ class TritonRest(clients.base_client.BaseClient):
         num_requests: Number of requests.
         qps: The number of requests being sent per second.
     """
+    tf.logging.info("Running REST benchmark at %s qps", qps)
+    uri = self.get_uri()
+    tf.logging.info("Inference Server Uri: %s", uri)
 
-    tf.logging.info("Running REST benchmark at {} qps".format(qps))
-
-    if self._host.endswith(":predict") or self._host.startswith("http"):
-      uri = self._host
-    else:
-      uri = f"http://{self._host}:{self._port}/v1/models/{self._model_name}:predict"
     dist = distribution.Distribution.factory(self._distribution, qps)
 
     # List appends are thread safe
@@ -110,10 +127,12 @@ class TritonRest(clients.base_client.BaseClient):
     def _make_rest_call(i, request):
       """Send REST POST request to Tensorflow Serving endpoint."""
 
-      headers = dict(self._http_headers)
-      if len(request) == 2 and request[1]:
-        request, content_length = request
-        headers["Inference-Header-Content-Length"] = str(content_length)
+      headers = self._http_headers
+      if len(request) == 2:
+        request, request_headers = request
+        if request_headers:
+          headers = dict(self._http_headers)
+          headers.update(request_headers)
       start_time = time.time()
       resp = r.post(uri, data=request, headers=headers)
       latency.append(time.time() - start_time)
@@ -181,4 +200,4 @@ class TritonRest(clients.base_client.BaseClient):
         "_latency": latency,
         "_start_time": start_time,
         "_end_time": time.time(),
-    }
+    }    

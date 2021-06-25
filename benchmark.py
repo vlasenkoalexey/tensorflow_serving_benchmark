@@ -52,13 +52,16 @@ tf.app.flags.DEFINE_float("request_timeout", 300.0,
                           "Timeout for inference request.")
 tf.app.flags.DEFINE_string("model_name", "",
                            "Name of the model being served on the ModelServer")
+tf.app.flags.DEFINE_string("model_version", "",
+                           "Version the model being served on the ModelServer")
 tf.app.flags.DEFINE_string(
     "signature_name",
     "serving_default",
     "Name of the model signature on the ModelServer",
 )
 tf.app.flags.DEFINE_string("host", "localhost",
-                           "Host name to connect to, localhost by default.")
+    "Host name to connect to, localhost by default. Alternatively you can specify"
+    "full URL to send requests to.")
 tf.app.flags.DEFINE_integer("port", None, "Port to connect to.")
 tf.app.flags.DEFINE_enum(
     "mode",
@@ -240,6 +243,7 @@ def main(argv):
 
   client_class = get_client_class()
   client = client_class(FLAGS.host, FLAGS.port, FLAGS.model_name,
+                        FLAGS.model_version,
                         FLAGS.signature_name, FLAGS.distribution,
                         FLAGS.input_name, FLAGS.default_int_type,
                         FLAGS.default_float_type, http_headers, grpc_metadata,
