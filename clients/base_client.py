@@ -12,9 +12,9 @@ class RequestFormat(Enum):
 
 class BaseClient(metaclass=abc.ABCMeta):
 
-  def __init__(self, host, port, model_name, model_version, signature_name, distribution,
-               input_name, default_int_type, default_float_type, http_headers,
-               grpc_metadata, grpc_compression, request_timeout):
+  def __init__(self, host, port, model_name, model_version, signature_name,
+               distribution, input_name, default_int_type, default_float_type,
+               http_headers, grpc_metadata, grpc_compression, request_timeout):
     self._host = host
     self._port = port
     self._model_name = model_name

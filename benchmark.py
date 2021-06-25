@@ -59,7 +59,8 @@ tf.app.flags.DEFINE_string(
     "serving_default",
     "Name of the model signature on the ModelServer",
 )
-tf.app.flags.DEFINE_string("host", "localhost",
+tf.app.flags.DEFINE_string(
+    "host", "localhost",
     "Host name to connect to, localhost by default. Alternatively you can specify"
     "full URL to send requests to.")
 tf.app.flags.DEFINE_integer("port", None, "Port to connect to.")
@@ -241,9 +242,9 @@ def main(argv):
 
   client_class = get_client_class()
   client = client_class(FLAGS.host, FLAGS.port, FLAGS.model_name,
-                        FLAGS.model_version,
-                        FLAGS.signature_name, FLAGS.distribution,
-                        FLAGS.input_name, FLAGS.default_int_type,
+                        FLAGS.model_version, FLAGS.signature_name,
+                        FLAGS.distribution, FLAGS.input_name,
+                        FLAGS.default_int_type,
                         FLAGS.default_float_type, http_headers, grpc_metadata,
                         get_grpc_compression(), FLAGS.request_timeout)
 
