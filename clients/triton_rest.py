@@ -1,7 +1,7 @@
 """Client for Triton Inference Server using REST API.
 
 References:
-- https://github.com/kubeflow/kfserving/blob/master/docs/predict-api/v2/required_api.md
+- https://github.com/kubeflow/kfserving/blob/master/docs/predict-api/v2/required_api.md#httprest
 - https://github.com/triton-inference-server/client/tree/master/src/python/examples
 - https://github.com/triton-inference-server/client/blob/master/src/python/library/tritonclient/http/__init__.py
 """
@@ -14,7 +14,7 @@ import clients.base_client
 import tensorflow.compat.v1 as tf
 import requests as r
 import numpy as np
-import tritonclient.http as httpclient
+import tritonclient.http as triton_httpclient
 import tritonclient.utils as triton_utils
 from tensorflow.python.framework import dtypes
 
@@ -57,7 +57,7 @@ class TritonRest(clients.base_client.BaseClient):
       if t == np.object_:
         value = map_multi_dimensional_list(value, lambda s: s.encode("utf-8"))
       numpy_value = np.array(value, dtype=t)
-      triton_request_input = httpclient.InferInput(
+      triton_request_input = triton_httpclient.InferInput(
         key, 
         list(numpy_value.shape), 
         triton_utils.np_to_triton_dtype(t))
@@ -65,7 +65,7 @@ class TritonRest(clients.base_client.BaseClient):
       triton_request_inputs.append(triton_request_input)
     # https://github.com/triton-inference-server/client/blob/530bcac5f1574aa2222930076200544eb274245c/src/python/library/tritonclient/http/__init__.py#L81
     # Returns tuple - request and request len to pass in Infer-Header-Content-Length header
-    (request, json_size) = httpclient._get_inference_request(
+    (request, json_size) = triton_httpclient._get_inference_request(
       inputs=triton_request_inputs, 
       request_id="", 
       outputs=None,

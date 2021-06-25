@@ -117,6 +117,9 @@ def get_client_class():
   elif FLAGS.mode == "triton_rest":
     from clients import triton_rest
     return triton_rest.TritonRest
+  elif FLAGS.mode == "triton_grpc":
+    from clients import triton_grpc
+    return triton_grpc.TritonGrpc
   else:
     raise ValueError("Invalid mode")
 
@@ -205,11 +208,6 @@ def print_result(result):
 def main(argv):
   del argv
   tf.disable_v2_behavior()
-
-  #   if FLAGS.mode == "triton_grpc":
-  #     import tritonclient.grpc as grpcclient
-  #   if FLAGS.mode == "triton_rest":
-  #     import tritonclient.http as httpclient
 
   if FLAGS.qps_range is None or FLAGS.qps_range == "":
     tf.logging.error("Please specify qps_range")
