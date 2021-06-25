@@ -111,6 +111,9 @@ def get_client_class():
   elif FLAGS.mode == "rest":
     from clients import tensorflow_serving_rest
     return tensorflow_serving_rest.TensorflowServingRest
+  elif FLAGS.mode == "triton_rest":
+    from clients import triton_rest
+    return triton_rest.TritonRest
   else:
     raise ValueError("Invalid mode")
 
