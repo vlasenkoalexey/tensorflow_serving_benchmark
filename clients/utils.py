@@ -15,10 +15,10 @@ def get_type(value, default_float_type, default_int_type):
   if is_subtype(value, float):
     return dtypes.as_dtype(
         default_float_type
-    ).as_numpy_dtype if default_float_type else numpy.float32
+    ).as_numpy_dtype if default_float_type else np.float32
   elif is_subtype(value, int):
     return dtypes.as_dtype(
-        default_int_type).as_numpy_dtype if default_int_type else numpy.int32
+        default_int_type).as_numpy_dtype if default_int_type else np.int32
   elif is_subtype(value, str):
     return np.object_
   elif is_subtype(value, bool):
