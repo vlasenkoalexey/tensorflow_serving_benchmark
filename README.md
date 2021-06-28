@@ -10,6 +10,10 @@ pip3 install tensorflow-serving-api
 pip3 install pandas
 pip3 install matplotlib
 
+# For benchmarking Triton
+pip3 install nvidia-pyindex
+pip3 install tritonclient[all]
+
 # Start model server in another terminal
 docker run -p 8500:8500 -p 8501:8501 \
   --mount type=bind,source=...,target=/models/default \
