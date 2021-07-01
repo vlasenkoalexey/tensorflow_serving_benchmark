@@ -38,7 +38,7 @@ class TritonGrpc(clients.base_grpc_client.BaseGrpcClient):
   def generate_grpc_request_from_dictionary(self, row_dict):
     triton_request_inputs = []
     for key, value in row_dict.items():
-      t = clients.utils.get_type(value, self._default_float_type,
+      t = clients.utils.get_type(key, value, self._default_float_type,
                                  self._default_int_type)
       if t == np.object_:
         value = clients.utils.map_multi_dimensional_list(

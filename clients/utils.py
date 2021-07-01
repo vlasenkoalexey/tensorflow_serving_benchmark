@@ -11,20 +11,19 @@ def is_subtype(value, t):
   return isinstance(value, t)
 
 
-def get_type(value, default_float_type, default_int_type):
+def get_type(key, value, default_float_type, default_int_type):
   if is_subtype(value, float):
     return dtypes.as_dtype(
-        default_float_type
-    ).as_numpy_dtype if default_float_type else np.float32
-  elif is_subtype(value, int):
-    return dtypes.as_dtype(
-        default_int_type).as_numpy_dtype if default_int_type else np.int32
+        default_float_type).as_numpy_dtype if default_float_type else np.float32
   elif is_subtype(value, str):
     return np.object_
   elif is_subtype(value, bool):
     return np.bool
+  elif is_subtype(value, int) or "/values" in key or "/indices" in key:
+    return dtypes.as_dtype(
+        default_int_type).as_numpy_dtype if default_int_type else np.int32
   else:
-    raise ValueError("Can't detect type for:" + str(value))
+    raise ValueError(f"Can't detect type for key {key} value {value}")
 
 
 def map_multi_dimensional_list(l, transform):

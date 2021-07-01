@@ -7,6 +7,7 @@ References:
 
 import time
 import clients.base_grpc_client
+import clients.utils
 import distribution
 import tensorflow.compat.v1 as tf
 import threading
@@ -40,23 +41,15 @@ class TensorflowServingGrpc(clients.base_grpc_client.BaseGrpcClient):
   def generate_grpc_request_from_dictionary(self, row_dict):
     """Generate gRPC inference request with payload."""
 
-    def isSubType(value, t):
-      while isinstance(value, list):
-        if len(value) > 0:
-          value = value[0]
-        else:
-          return False
-      return isinstance(value, t)
-
     request = predict_pb2.PredictRequest()
     request.model_spec.name = self._model_name
     request.model_spec.signature_name = self._signature_name
     for key, value in row_dict.items():
       proto = None
-      if self._default_int_type and (isSubType(value, int) or
+      if self._default_int_type and (clients.utils.is_subtype(value, int) or
                                      "/values" in key or "/indices" in key):
         proto = tf.make_tensor_proto(value, dtype=self._default_int_type)
-      elif self._default_float_type and isSubType(value, float):
+      elif self._default_float_type and clients.utils.is_subtype(value, float):
         proto = tf.make_tensor_proto(value, dtype=self._default_float_type)
       else:
         proto = tf.make_tensor_proto(value)
