@@ -139,10 +139,10 @@ def get_qps_range(qps_range_string):
   qps_range_string = qps_range_string.strip()
   if qps_range_string.startswith("[") and qps_range_string.endswith("]"):
     qps_range_string = qps_range_string.lstrip("[").rstrip("]")
-    qps_range_list = list(map(lambda v: int(v), qps_range_string.split(",")))
+    qps_range_list = list(map(lambda v: float(v), qps_range_string.split(",")))
     return qps_range_list
 
-  qps_range_list = list(map(lambda v: int(v), qps_range_string.split(",")))
+  qps_range_list = list(map(lambda v: float(v), qps_range_string.split(",")))
   qps_range_start = 0
   qps_range_step = 1
   if len(qps_range_list) == 1:

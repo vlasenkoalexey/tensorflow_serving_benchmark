@@ -6,6 +6,7 @@ References:
 - https://github.com/tensorflow/serving
 """
 
+import base64
 import json
 import time
 import threading

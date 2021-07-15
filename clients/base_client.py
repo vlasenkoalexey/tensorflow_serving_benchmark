@@ -1,7 +1,9 @@
 """Abstract base class for benchmark clients."""
 
 import abc
+import base64
 from enum import Enum
+import tensorflow.compat.v1 as tf
 
 
 class RequestFormat(Enum):
@@ -43,9 +45,11 @@ class BaseClient(metaclass=abc.ABCMeta):
 
   def get_tfrecord_rows(self, tfrecord_dataset_path, count, batch_size):
     tf.logging.info("loading data for prediction")
-    compression_type = "GZIP" if path.endswith(".gz") else None
+    if not count:
+      count = 1
+    compression_type = "GZIP" if tfrecord_dataset_path.endswith(".gz") else None
     dataset = tf.data.TFRecordDataset(
-        gfile.Glob(path), compression_type=compression_type)
+        tf.gfile.Glob(tfrecord_dataset_path), compression_type=compression_type)
     if batch_size is not None:
       dataset = dataset.batch(batch_size)
     rows = []
