@@ -67,7 +67,8 @@ tf.app.flags.DEFINE_integer("port", None, "Port to connect to.")
 tf.app.flags.DEFINE_enum(
     "mode",
     "grpc",
-    ["grpc", "sync_grpc", "rest", "triton_grpc", "triton_rest"],
+    ["grpc", "sync_grpc", "rest", "triton_grpc", "triton_rest", "vertex_gapic", 
+     "vertex_rest"],
     "Benchmark mode: gRPC, synchronous gRPC, or REST, or Triton format.",
 )
 tf.app.flags.DEFINE_enum("distribution", "uniform",
@@ -122,6 +123,12 @@ def get_client_class():
   elif FLAGS.mode == "triton_grpc":
     from clients import triton_grpc
     return triton_grpc.TritonGrpc
+  elif FLAGS.mode == "vertex_gapic":
+    from clients import vertex_gapic
+    return vertex_gapic.VertexGapic
+  elif FLAGS.mode == "vertex_rest":
+    from clients import vertex_rest
+    return vertex_rest.VertexRest
   else:
     raise ValueError("Invalid mode")
 
