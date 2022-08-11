@@ -34,10 +34,22 @@ from tensorflow_serving.apis import prediction_service_pb2_grpc
 
 from clients import base_client
 
-tf.app.flags.DEFINE_integer("num_requests", 20, "Total # of requests sent.")
+tf.app.flags.DEFINE_integer(
+    "num_requests",
+    0,
+    "Total # of requests to send for each benchmark. "
+    "Either num_requests or num_seconds has to be specified.")
+tf.app.flags.DEFINE_float(
+    "num_seconds",
+    0,
+    "Number of seconds to run each benchmark for. "
+    "Either num_requests or num_seconds has to be specified.")
 tf.app.flags.DEFINE_integer(
     "num_warmup_requests", 0,
     "Number requests to send before starting benchmark.")
+tf.app.flags.DEFINE_integer(
+    "num_warmup_delay_seconds", 2,
+    "Number of seconds to wait after warmup requests are sent.")
 tf.app.flags.DEFINE_string(
     "qps_range",
     "",
@@ -155,9 +167,9 @@ def get_qps_range(qps_range_string):
   if len(qps_range_list) == 1:
     return [qps_range_list[0]]
   elif len(qps_range_list) == 2:
-    return list(np.arange(qps_range_list[0], qps_range_list[1]))
+    return range(qps_range_list[0], qps_range_list[1])
   elif len(qps_range_list) == 3:
-    return list(np.arange(qps_range_list[0], qps_range_list[1], qps_range_list[2]))
+    return range(qps_range_list[0], qps_range_list[1], qps_range_list[2])
   else:
     raise ValueError("Invalid argument qps_range:" + qps_range_start)
 
@@ -214,6 +226,19 @@ def print_result(result):
   tf.logging.info("\t".join(v))
 
 
+def get_requests_for_qps(requests_list, qps, num_requests=None, num_seconds=None, worker_index=0):
+  if num_requests:
+    pass
+  elif num_seconds:
+    num_requests = int(max(qps * num_seconds, 10))
+  else:
+    raise ValueError("Neither num_requests, nor num_seconds are specified")
+  print('num_requests', num_requests)
+  return islice(cycle(requests_list),
+                worker_index * num_requests,
+                (worker_index + 1) * num_requests), num_requests
+
+
 def main(argv):
   del argv
   tf.disable_v2_behavior()
@@ -221,6 +246,9 @@ def main(argv):
   if FLAGS.qps_range is None or FLAGS.qps_range == "":
     tf.logging.error("Please specify qps_range")
     exit(1)
+
+  if not FLAGS.num_requests and not FLAGS.num_seconds:
+    tf.logging.error("Either num_requests, or num_seconds should be specified")
 
   request_path = None
   request_format = None
@@ -261,37 +289,40 @@ def main(argv):
                                       FLAGS.num_warmup_requests,
                                       FLAGS.batch_size)
 
-  if len(requests_list) < FLAGS.workers * FLAGS.num_requests:
-    tf.logging.warn("Dataset you specified contains data for {} requests, "
-                    "while you need {} requests for each of {} workers. "
-                    "Some requests are going to be reused.".format(
-                        len(requests_list), FLAGS.num_requests, FLAGS.workers))
-
   results = {}
   if FLAGS.num_warmup_requests > 0:
     tf.logging.info("Sending {} warmup requests".format(
         FLAGS.num_warmup_requests))
-    warmup_requests = islice(cycle(requests_list), FLAGS.num_warmup_requests)
-    _ = client.run(warmup_requests, FLAGS.num_warmup_requests,
-                   get_qps_range(FLAGS.qps_range)[0])
+    warmup_qps = get_qps_range(FLAGS.qps_range)[0]
+    warmup_requests, num_requests = get_requests_for_qps(
+      requests_list, warmup_qps, num_requests=FLAGS.num_warmup_requests)
+    _ = client.run(warmup_requests, num_requests, warmup_qps)
+    if FLAGS.num_warmup_delay_seconds:
+      tf.logging.info("Waiting for %d seconds after warmup", FLAGS.num_warmup_delay_seconds)
+      time.sleep(FLAGS.num_warmup_delay_seconds)
     tf.logging.info("Warmup complete")
 
   if FLAGS.workers == 1:
     for qps in get_qps_range(FLAGS.qps_range):
-      worker_requests = islice(cycle(requests_list), FLAGS.num_requests)
-      result = client.run(worker_requests, FLAGS.num_requests, qps)
+      worker_requests, num_requests = get_requests_for_qps(
+        requests_list,
+        qps,
+        FLAGS.num_requests,
+        FLAGS.num_seconds)
+      result = client.run(worker_requests, num_requests, qps)
       print_result(result)
       merge_results(results, result)
   else:
 
     def _worker_load_test_func(qps, worker_results, worker_index):
-      worker_requests = islice(
-          cycle(requests_list),
-          worker_index * FLAGS.num_requests,
-          (worker_index + 1) * FLAGS.num_requests,
-      )
+      worker_requests, num_requests = get_requests_for_qps(
+        requests_list,
+        qps,
+        FLAGS.num_requests,
+        FLAGS.num_seconds,
+        worker_index = worker_index)
       worker_results[worker_index] = client.run(worker_requests,
-                                                FLAGS.num_requests, qps)
+                                                num_requests, qps)
 
     for qps in get_qps_range(FLAGS.qps_range):
       worker_processes = []
@@ -353,4 +384,6 @@ def main(argv):
 
 if __name__ == "__main__":
   tf.logging.set_verbosity(tf.logging.INFO)
+  logger = tf.get_logger()
+  logger.propagate = False
   tf.app.run(main)

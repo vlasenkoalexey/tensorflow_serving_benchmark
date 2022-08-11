@@ -56,6 +56,7 @@ def generate_graph(filename_legend_pairs,
   ax.set_title(title)
   ax.set_xlabel('QPS')
   ax.set_ylabel('Latency(ms)')
+  ax.grid(True)
 
   for pair in filename_legend_pairs:
     if len(pair) == 2:
@@ -75,7 +76,7 @@ def generate_graph(filename_legend_pairs,
       y = np.array(np.clip(r[column], min_y, max_y))
 
     y_smoothed = gaussian_filter1d(y, sigma=sigma)
-    ax.plot(x, y_smoothed, label=legend)
+    ax.plot(x, y_smoothed, label=legend, marker='s')
     ax.legend()
 
   _min_x, _max_x, _min_y, _max_y = ax.axis()
