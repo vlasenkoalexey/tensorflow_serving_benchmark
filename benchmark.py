@@ -167,9 +167,9 @@ def get_qps_range(qps_range_string):
   if len(qps_range_list) == 1:
     return [qps_range_list[0]]
   elif len(qps_range_list) == 2:
-    return range(qps_range_list[0], qps_range_list[1])
+    return list(np.arange(qps_range_list[0], qps_range_list[1]))
   elif len(qps_range_list) == 3:
-    return range(qps_range_list[0], qps_range_list[1], qps_range_list[2])
+    return list(np.arange(qps_range_list[0], qps_range_list[1], qps_range_list[2]))
   else:
     raise ValueError("Invalid argument qps_range:" + qps_range_start)
 
