@@ -3,7 +3,6 @@ import time
 import clients.base_grpc_client
 import distribution
 import tensorflow.compat.v1 as tf
-import threading
 import queue as Queue
 import grpc
 import json
@@ -27,7 +26,7 @@ class Worker(object):
   )
 
   def __init__(self, index, request, stub, queue, qps, num_requests,
-               error_details, metadata, call_predict_function):
+               error_details, metadata, call_predict_function, bail_event):
     self._id = index
     self._request = request
     self._stub = stub
@@ -40,6 +39,7 @@ class Worker(object):
     self._error_details = error_details
     self._metadata = metadata
     self._call_predict_function = call_predict_function
+    self._bail_event = bail_event
 
   def start(self):
     """Start to send request."""
@@ -49,6 +49,7 @@ class Worker(object):
       exception = resp_future.exception()
       if exception:
         self._success = False
+        self._bail_event.set()
         if hasattr(exception, "details"):
           if not exception.details() in self._error_details:
             self._error_details.add(exception.details())
@@ -121,13 +122,6 @@ class BaseGrpcClient(clients.base_client.BaseClient, metaclass=abc.ABCMeta):
     dist = distribution.Distribution.factory(self._distribution, qps)
 
     q = Queue.Queue()
-    intervals = []
-
-    for i in range(num_requests):
-      q.put(i)
-      intervals.append(dist.next())
-      i = i + 1
-
     i = 0
     workers = []
     miss_rate_percent = []
@@ -135,9 +129,13 @@ class BaseGrpcClient(clients.base_client.BaseClient, metaclass=abc.ABCMeta):
     previous_worker_start = start_time
     error_details = set()
     for request in requests:
-      interval = intervals[i]
+      if self._bail_on_error and self.bail_event.is_set():
+        break
+
+      interval = dist.next()
+      q.put(i)
       worker = Worker(i, request, stub, q, qps, num_requests, error_details,
-                      self._grpc_metadata, self.call_predict)
+                      self._grpc_metadata, self.call_predict, self.bail_event)
       workers.append(worker)
       worker.start()
 
@@ -182,10 +180,10 @@ class BaseGrpcClient(clients.base_client.BaseClient, metaclass=abc.ABCMeta):
         "success": success_count,
         "error": error_count,
         "time": acc_time,
-        "avg_latency": np.average(latency) * 1000,
-        "p50": np.percentile(latency, 50) * 1000,
-        "p90": np.percentile(latency, 90) * 1000,
-        "p99": np.percentile(latency, 99) * 1000,
+        "avg_latency": np.average(latency) * 1000 if latency else [],
+        "p50": np.percentile(latency, 50) * 1000 if latency else [],
+        "p90": np.percentile(latency, 90) * 1000 if latency else [],
+        "p99": np.percentile(latency, 99) * 1000 if latency else [],
         "avg_miss_rate_percent": avg_miss_rate_percent,
         "_latency": latency,
         "_start_time": start_time,

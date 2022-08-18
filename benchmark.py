@@ -117,6 +117,9 @@ tf.app.flags.DEFINE_string("default_float_type", "",
                            "Default type to use for fractional values.")
 tf.app.flags.DEFINE_bool("busy_sleep", False,
                          "Use busy sleep instead of time.sleep().")
+tf.app.flags.DEFINE_bool(
+    "bail_on_error", False,
+    "Stop sending more requests for the current QPS if any error occurs.")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -209,10 +212,10 @@ def merge_worker_results(worker_results):
       "success": success,
       "error": error,
       "time": time,
-      "avg_latency": np.average(latency) * 1000,
-      "p50": np.percentile(latency, 50) * 1000,
-      "p90": np.percentile(latency, 90) * 1000,
-      "p99": np.percentile(latency, 99) * 1000,
+      "avg_latency": np.average(latency) * 1000 if latency else [],
+      "p50": np.percentile(latency, 50) * 1000 if latency else [],
+      "p90": np.percentile(latency, 90) * 1000 if latency else [],
+      "p99": np.percentile(latency, 99) * 1000 if latency else [],
       "avg_miss_rate_percent": np.average(avg_miss_rate_percent),
   }
 
@@ -285,7 +288,7 @@ def main(argv):
                         FLAGS.default_int_type,
                         FLAGS.default_float_type, http_headers, grpc_metadata,
                         get_grpc_compression(), FLAGS.request_timeout,
-                        FLAGS.busy_sleep)
+                        FLAGS.busy_sleep, FLAGS.bail_on_error)
 
   tf.logging.info("Loading data")
   requests_list = client.get_requests(request_format, request_path,
@@ -328,6 +331,7 @@ def main(argv):
                                                 num_requests, qps)
 
     for qps in get_qps_range(FLAGS.qps_range):
+      client.bail_event.clear()
       worker_processes = []
       with multiprocessing.Manager() as manager:
         worker_results = manager.list()
