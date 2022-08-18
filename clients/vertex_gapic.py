@@ -146,7 +146,7 @@ class VertexGapic(clients.base_client.BaseClient):
       # send requests at a constant rate and adjust for the time it took to send previous request
       pause = interval - (time.time() - previous_worker_start)
       if pause > 0:
-        time.sleep(pause)
+        self.sleep(pause)
       else:
         missed_delay = (100 *
                         ((time.time() - previous_worker_start) - interval) /

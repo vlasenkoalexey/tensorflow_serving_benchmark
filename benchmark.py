@@ -115,6 +115,8 @@ tf.app.flags.DEFINE_string("default_int_type", "",
                            "Default type to use for integer values.")
 tf.app.flags.DEFINE_string("default_float_type", "",
                            "Default type to use for fractional values.")
+tf.app.flags.DEFINE_bool("busy_sleep", False,
+                         "Use busy sleep instead of time.sleep().")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -282,7 +284,8 @@ def main(argv):
                         FLAGS.distribution, FLAGS.input_name,
                         FLAGS.default_int_type,
                         FLAGS.default_float_type, http_headers, grpc_metadata,
-                        get_grpc_compression(), FLAGS.request_timeout)
+                        get_grpc_compression(), FLAGS.request_timeout,
+                        FLAGS.busy_sleep)
 
   tf.logging.info("Loading data")
   requests_list = client.get_requests(request_format, request_path,

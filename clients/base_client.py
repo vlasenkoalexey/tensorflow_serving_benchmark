@@ -2,6 +2,7 @@
 
 import abc
 import base64
+import time
 from enum import Enum
 import tensorflow.compat.v1 as tf
 
@@ -16,7 +17,8 @@ class BaseClient(metaclass=abc.ABCMeta):
 
   def __init__(self, host, port, model_name, model_version, signature_name,
                distribution, input_name, default_int_type, default_float_type,
-               http_headers, grpc_metadata, grpc_compression, request_timeout):
+               http_headers, grpc_metadata, grpc_compression, request_timeout,
+               busy_sleep):
     self._host = host
     self._port = port
     self._model_name = model_name
@@ -30,6 +32,7 @@ class BaseClient(metaclass=abc.ABCMeta):
     self._grpc_metadata = grpc_metadata
     self._grpc_compression = grpc_compression
     self._request_timeout = request_timeout
+    self._busy_sleep = busy_sleep
 
   @abc.abstractmethod
   def get_requests_from_tfrecord(self, path, count, batch_size):
@@ -61,6 +64,16 @@ class BaseClient(metaclass=abc.ABCMeta):
         inputs = sess.run(next)
         rows.append(inputs)
     return rows
+
+  def sleep(self, seconds: float) -> None:
+    if seconds < 0:
+      raise ValueError("Sleep seconds can't be negative.", seconds)
+    if self._busy_sleep:
+      wakeup = time.time() + seconds
+      while time.time() < wakeup:
+        time.sleep(0.0)
+    else:
+      time.sleep(seconds)
 
   def get_requests(self, format, path, count, batch_size):
     if format == RequestFormat.FILE:
