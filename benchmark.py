@@ -334,6 +334,11 @@ def main(argv):
               args=(qps, worker_results, worker_index))
           worker_processes.append(worker_process)
           worker_results.append({})
+
+        for worker_process in worker_processes:
+          # Offset each worker's startup time.
+          # Otherwise, the uniform distribution would become a uniform-burst.
+          time.sleep(1 / qps / len(worker_processes))
           worker_process.start()
 
         for worker_process in worker_processes:
