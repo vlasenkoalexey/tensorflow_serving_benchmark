@@ -113,8 +113,9 @@ class BaseGrpcClient(clients.base_client.BaseClient, metaclass=abc.ABCMeta):
     uri = f"{self._host}:{self._port}"
     tf.logging.info("Inference Server Uri: %s", uri)
 
+    options = [("grpc.max_receive_message_length", 128 * 2**20)]
     grpc_channel = grpc.insecure_channel(
-        uri, compression=self._grpc_compression)
+        uri, options=options, compression=self._grpc_compression)
     stub = self.create_grpc_stub(grpc_channel)
 
     dist = distribution.Distribution.factory(self._distribution, qps)
