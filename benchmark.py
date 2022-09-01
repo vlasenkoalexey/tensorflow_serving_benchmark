@@ -120,6 +120,10 @@ tf.app.flags.DEFINE_bool("busy_sleep", False,
 tf.app.flags.DEFINE_bool(
     "bail_on_error", False,
     "Stop sending more requests for the current QPS if any error occurs.")
+tf.app.flags.DEFINE_integer(
+    "goodput_search_p99_ms", 0,
+    "Run with high-to-low QPS. Skip lower QPS if all requests succeeded and p99 is less than the given value for the current QPS."
+)
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -244,6 +248,11 @@ def get_requests_for_qps(requests_list, qps, num_requests=None, num_seconds=None
                 (worker_index + 1) * num_requests), num_requests
 
 
+def is_goodput_found(result: dict) -> bool:
+  return (FLAGS.goodput_search_p99_ms > 0 and result["error"] == 0 and
+          result["p99"] < FLAGS.goodput_search_p99_ms)
+
+
 def main(argv):
   del argv
   tf.disable_v2_behavior()
@@ -295,11 +304,15 @@ def main(argv):
                                       FLAGS.num_warmup_requests,
                                       FLAGS.batch_size)
 
+  qps_range = get_qps_range(FLAGS.qps_range)
+  if FLAGS.goodput_search_p99_ms:
+    qps_range = sorted(qps_range, reverse=True)
+
   results = {}
   if FLAGS.num_warmup_requests > 0:
     tf.logging.info("Sending {} warmup requests".format(
         FLAGS.num_warmup_requests))
-    warmup_qps = get_qps_range(FLAGS.qps_range)[0]
+    warmup_qps = qps_range[0]
     warmup_requests, num_requests = get_requests_for_qps(
       requests_list, warmup_qps, num_requests=FLAGS.num_warmup_requests)
     _ = client.run(warmup_requests, num_requests, warmup_qps)
@@ -309,7 +322,7 @@ def main(argv):
     tf.logging.info("Warmup complete")
 
   if FLAGS.workers == 1:
-    for qps in get_qps_range(FLAGS.qps_range):
+    for qps in qps_range:
       worker_requests, num_requests = get_requests_for_qps(
         requests_list,
         qps,
@@ -318,6 +331,8 @@ def main(argv):
       result = client.run(worker_requests, num_requests, qps)
       print_result(result)
       merge_results(results, result)
+      if is_goodput_found(result):
+        break
   else:
 
     def _worker_load_test_func(qps, worker_results, worker_index):
@@ -330,7 +345,7 @@ def main(argv):
       worker_results[worker_index] = client.run(worker_requests,
                                                 num_requests, qps)
 
-    for qps in get_qps_range(FLAGS.qps_range):
+    for qps in qps_range:
       client.bail_event.clear()
       worker_processes = []
       with multiprocessing.Manager() as manager:
@@ -354,6 +369,8 @@ def main(argv):
         result = merge_worker_results(worker_results)
         print_result(result)
         merge_results(results, result)
+        if is_goodput_found(result):
+          break
 
   if FLAGS.title and "reqested_qps" in results and len(
       results["reqested_qps"]) > 0:
