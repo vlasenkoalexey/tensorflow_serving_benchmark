@@ -34,7 +34,7 @@ class BaseClient(metaclass=abc.ABCMeta):
     self._grpc_compression = grpc_compression
     self._request_timeout = request_timeout
     self._busy_sleep = busy_sleep
-    self._bail_on_error = bail_on_error
+    self.bail_on_error = bail_on_error
     self.bail_event = multiprocessing.Event()
 
   @abc.abstractmethod

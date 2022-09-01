@@ -129,7 +129,7 @@ class BaseGrpcClient(clients.base_client.BaseClient, metaclass=abc.ABCMeta):
     previous_worker_start = start_time
     error_details = set()
     for request in requests:
-      if self._bail_on_error and self.bail_event.is_set():
+      if self.bail_on_error and self.bail_event.is_set():
         break
 
       interval = dist.next()

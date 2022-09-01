@@ -315,7 +315,9 @@ def main(argv):
     warmup_qps = qps_range[0]
     warmup_requests, num_requests = get_requests_for_qps(
       requests_list, warmup_qps, num_requests=FLAGS.num_warmup_requests)
+    client.bail_on_error = False
     _ = client.run(warmup_requests, num_requests, warmup_qps)
+    client.bail_on_error = FLAGS.bail_on_error
     if FLAGS.num_warmup_delay_seconds:
       tf.logging.info("Waiting for %d seconds after warmup", FLAGS.num_warmup_delay_seconds)
       time.sleep(FLAGS.num_warmup_delay_seconds)
