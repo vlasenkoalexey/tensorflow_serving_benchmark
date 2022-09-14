@@ -115,6 +115,15 @@ tf.app.flags.DEFINE_string("default_int_type", "",
                            "Default type to use for integer values.")
 tf.app.flags.DEFINE_string("default_float_type", "",
                            "Default type to use for fractional values.")
+tf.app.flags.DEFINE_bool("busy_sleep", False,
+                         "Use busy sleep instead of time.sleep().")
+tf.app.flags.DEFINE_bool(
+    "bail_on_error", False,
+    "Stop sending more requests for the current QPS if any error occurs.")
+tf.app.flags.DEFINE_integer(
+    "goodput_search_p99_ms", 0,
+    "Run with high-to-low QPS. Skip lower QPS if all requests succeeded and p99 is less than the given value for the current QPS."
+)
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -207,10 +216,10 @@ def merge_worker_results(worker_results):
       "success": success,
       "error": error,
       "time": time,
-      "avg_latency": np.average(latency) * 1000,
-      "p50": np.percentile(latency, 50) * 1000,
-      "p90": np.percentile(latency, 90) * 1000,
-      "p99": np.percentile(latency, 99) * 1000,
+      "avg_latency": np.average(latency) * 1000 if latency else [],
+      "p50": np.percentile(latency, 50) * 1000 if latency else [],
+      "p90": np.percentile(latency, 90) * 1000 if latency else [],
+      "p99": np.percentile(latency, 99) * 1000 if latency else [],
       "avg_miss_rate_percent": np.average(avg_miss_rate_percent),
   }
 
@@ -237,6 +246,11 @@ def get_requests_for_qps(requests_list, qps, num_requests=None, num_seconds=None
   return islice(cycle(requests_list),
                 worker_index * num_requests,
                 (worker_index + 1) * num_requests), num_requests
+
+
+def is_goodput_found(result: dict) -> bool:
+  return (FLAGS.goodput_search_p99_ms > 0 and result["error"] == 0 and
+          result["p99"] < FLAGS.goodput_search_p99_ms)
 
 
 def main(argv):
@@ -282,28 +296,35 @@ def main(argv):
                         FLAGS.distribution, FLAGS.input_name,
                         FLAGS.default_int_type,
                         FLAGS.default_float_type, http_headers, grpc_metadata,
-                        get_grpc_compression(), FLAGS.request_timeout)
+                        get_grpc_compression(), FLAGS.request_timeout,
+                        FLAGS.busy_sleep, FLAGS.bail_on_error)
 
   tf.logging.info("Loading data")
   requests_list = client.get_requests(request_format, request_path,
                                       FLAGS.num_warmup_requests,
                                       FLAGS.batch_size)
 
+  qps_range = get_qps_range(FLAGS.qps_range)
+  if FLAGS.goodput_search_p99_ms:
+    qps_range = sorted(qps_range, reverse=True)
+
   results = {}
   if FLAGS.num_warmup_requests > 0:
     tf.logging.info("Sending {} warmup requests".format(
         FLAGS.num_warmup_requests))
-    warmup_qps = get_qps_range(FLAGS.qps_range)[0]
+    warmup_qps = qps_range[0]
     warmup_requests, num_requests = get_requests_for_qps(
       requests_list, warmup_qps, num_requests=FLAGS.num_warmup_requests)
+    client.bail_on_error = False
     _ = client.run(warmup_requests, num_requests, warmup_qps)
+    client.bail_on_error = FLAGS.bail_on_error
     if FLAGS.num_warmup_delay_seconds:
       tf.logging.info("Waiting for %d seconds after warmup", FLAGS.num_warmup_delay_seconds)
       time.sleep(FLAGS.num_warmup_delay_seconds)
     tf.logging.info("Warmup complete")
 
   if FLAGS.workers == 1:
-    for qps in get_qps_range(FLAGS.qps_range):
+    for qps in qps_range:
       worker_requests, num_requests = get_requests_for_qps(
         requests_list,
         qps,
@@ -312,6 +333,8 @@ def main(argv):
       result = client.run(worker_requests, num_requests, qps)
       print_result(result)
       merge_results(results, result)
+      if is_goodput_found(result):
+        break
   else:
 
     def _worker_load_test_func(qps, worker_results, worker_index):
@@ -324,7 +347,8 @@ def main(argv):
       worker_results[worker_index] = client.run(worker_requests,
                                                 num_requests, qps)
 
-    for qps in get_qps_range(FLAGS.qps_range):
+    for qps in qps_range:
+      client.bail_event.clear()
       worker_processes = []
       with multiprocessing.Manager() as manager:
         worker_results = manager.list()
@@ -347,6 +371,8 @@ def main(argv):
         result = merge_worker_results(worker_results)
         print_result(result)
         merge_results(results, result)
+        if is_goodput_found(result):
+          break
 
   if FLAGS.title and "reqested_qps" in results and len(
       results["reqested_qps"]) > 0:
